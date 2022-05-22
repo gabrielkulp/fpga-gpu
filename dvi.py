@@ -12,6 +12,7 @@ dvi_resource = Resource(
 	Subsignal("enable", Pins("3",  dir="o", conn=("pmod", 1)))
 )
 
+
 class DVI_Timing(Elaboratable):
 	def __init__(self):
 		# all are outputs
@@ -20,92 +21,86 @@ class DVI_Timing(Elaboratable):
 		self.v_sync = Signal(reset=1)
 		self.h_sync = Signal(reset=1)
 		self.data_enable = Signal()
-		self.h_counter = Signal(11)
-		self.v_counter = Signal(10)
-		self.px_clk = Signal()
-		self.signals = [self.x, self.y, self.v_sync, self.h_sync, self.data_enable, self.h_counter, self.v_counter]
 	
 	def elaborate(self, _platform):
 		m = Module()
-		
-		h_bp    = 88
-		h_actv  = 800
-		h_fp    = 40
-		h_sync  = 128
-		h_total = 1056
 
-		v_bp    = 23
-		v_actv  = 600
-		v_fp    = 1
-		v_sync  = 4
-		v_total = 628
+		# 800x600, 60Hz -> 40MHz px clock
+		h_bp, h_actv, h_fp, h_sync = 88, 800, 40, 128
+		v_bp, v_actv, v_fp, v_sync = 23, 600, 1, 4
 
-		y_strobe = Signal()
-		m.d.px += y_strobe.eq(0)
+		# simulation logic: less scrolling through waveforms
+		if _platform == None:
+			h_bp, h_actv, h_fp, h_sync = 10, 20, 5, 15
+			v_bp, v_actv, v_fp, v_sync = 4, 8, 1, 2
+
+		h_counter = Signal(range(max(h_bp, h_actv, h_fp, h_sync)))
+		v_counter = Signal(range(max(v_bp, v_actv, v_fp, v_sync)))
+
+		line_done = Signal()
+		m.d.px += line_done.eq(0)
 
 		v_enable = Signal()
 		h_enable = Signal()
 
-		m.d.px += self.h_counter.eq(self.h_counter + 1)
-		with m.FSM(name="horizontal_state", reset="BACK_PORCH"):
+		m.d.px += h_counter.eq(h_counter + 1)
+		with m.FSM(name="horizontal_state", reset="BACK_PORCH", domain="px"):
 			with m.State("BACK_PORCH"):
-				with m.If(self.h_counter == h_bp-1):
-					m.d.px += self.h_counter.eq(0)
+				with m.If(h_counter == h_bp-1):
+					m.d.px += h_counter.eq(0)
 					m.next = "ACTIVE"
 					m.d.px += h_enable.eq(1)
 
 			with m.State("ACTIVE"):
-				m.d.px += self.x.eq(self.x + 1)
-				with m.If(self.h_counter == h_actv-1):
-					m.d.px += self.h_counter.eq(0)
-					m.d.px += self.x.eq(0)
+				with m.If(h_counter == h_actv-1):
+					m.d.px += h_counter.eq(0)
 					m.next = "FRONT_PORCH"
-					m.d.px += self.h_sync.eq(0)
 					m.d.px += h_enable.eq(0)
 
 			with m.State("FRONT_PORCH"):
-				with m.If(self.h_counter == h_fp-1):
-					m.d.px += self.h_counter.eq(0)
+				with m.If(h_counter == h_fp-1):
+					m.d.px += self.h_sync.eq(0)
+					m.d.px += h_counter.eq(0)
 					m.next = "SYNC"
 
 			with m.State("SYNC"):
-				with m.If(self.h_counter == h_sync-1):
-					m.d.px += self.h_counter.eq(0)
-					m.d.px += y_strobe.eq(1)
+				with m.If(h_counter == h_sync-1):
+					m.d.px += h_counter.eq(0)
 					m.d.px += self.h_sync.eq(1)
 					m.next = "BACK_PORCH"
+				with m.Elif(h_counter == h_sync-2):
+					m.d.px += line_done.eq(1)
 		
-		with m.If(y_strobe):
-			m.d.px += self.v_counter.eq(self.v_counter + 1)
-			with m.FSM(name="vertical_state", reset="BACK_PORCH"):
+		with m.If(line_done):
+			m.d.px += v_counter.eq(v_counter + 1)
+			with m.FSM(name="vertical_state", reset="BACK_PORCH", domain="px"):
 				with m.State("BACK_PORCH"):
-					with m.If(self.v_counter == v_bp-1):
-						m.d.px += self.v_counter.eq(0)
+					with m.If(v_counter == v_bp-1):
+						m.d.px += v_counter.eq(0)
 						m.next = "ACTIVE"
 						m.d.px += v_enable.eq(1)
 
 				with m.State("ACTIVE"):
-					m.d.px += self.y.eq(self.y + 1)
-					with m.If(self.v_counter == v_actv-1):
-						m.d.px += self.v_counter.eq(0)
-						m.d.px += self.y.eq(0)
+					with m.If(v_counter == v_actv-1):
+						m.d.px += v_counter.eq(0)
 						m.next = "FRONT_PORCH"
-						m.d.px += self.v_sync.eq(0)
 						m.d.px += v_enable.eq(0)
 
 				with m.State("FRONT_PORCH"):
-					with m.If(self.v_counter == v_fp-1):
-						m.d.px += self.v_counter.eq(0)
+					with m.If(v_counter == v_fp-1):
+						m.d.px += self.v_sync.eq(0)
+						m.d.px += v_counter.eq(0)
 						m.next = "SYNC"
 
 				with m.State("SYNC"):
-					with m.If(self.v_counter == v_sync-1):
-						m.d.px += self.y.eq(0)
+					with m.If(v_counter == v_sync-1):
 						m.d.px += self.v_sync.eq(1)
-						m.d.px += self.v_counter.eq(0)
+						m.d.px += v_counter.eq(0)
 						m.next = "BACK_PORCH"
 		
 		m.d.comb += self.data_enable.eq(v_enable & h_enable)
+		m.d.comb += self.x.eq(Mux(self.data_enable, h_counter, 0))
+		m.d.comb += self.y.eq(Mux(self.data_enable, v_counter, 0))
 
 		return m
 
@@ -114,8 +109,8 @@ class DVI_Timing(Elaboratable):
 # also still outputs 12MHz for running main logic
 class DVI_PLL(Elaboratable):
 	def __init__(self):
-		self.clk39_750 = Signal(attrs = {"keep": "true"})  # out
-		self.clk12 = Signal(attrs = {"keep": "true"})  # out
+		self.clk39_750 = Signal(attrs = {"keep": "true"})
+		self.clk12 = Signal(attrs = {"keep": "true"})
 	
 	def elaborate(self, platform):
 		m = Module()
@@ -138,6 +133,8 @@ class DVI_PLL(Elaboratable):
 			p_FILTER_RANGE = 1
 		)
 
+		# redefine sync domain to be driven by this 12MHz output and
+		# add a new px domain. Both domains will be available everywhere
 		platform.add_clock_constraint(self.clk12, 12e6)
 		platform.add_clock_constraint(self.clk39_750, 39.750e6)
 		m.domains += [
@@ -151,59 +148,60 @@ class DVI_PLL(Elaboratable):
 		return m
 
 
+# instantiates the PLL and sets up chip IO for you
 class DVI(Elaboratable):
 	def __init__(self):
-		self.red = Signal(4)
+		self.red   = Signal(4)
 		self.green = Signal(4)
-		self.blue = Signal(4)
+		self.blue  = Signal(4)
 
 		# outputs
 		self.drawing = Signal()
 		self.x = Signal(10)
 		self.y = Signal(10)
-		self.clk_px = Signal(attrs = {"keep": "true"})
-		self.clk_sync = Signal(attrs = {"keep": "true"})
 
 	def elaborate(self, platform):
 		m = Module()
 
 		dvi_clock = DVI_PLL()
-		m.submodules += dvi_clock
-
 		dvi_timing = DVI_Timing()
-		m.submodules += dvi_timing
+		m.submodules += [dvi_clock, dvi_timing]
 
-		# connect to the physical pins
-		# xdr assigns 1 for buffered and 2 for DDR
+		# xdr: 1 for buffered, 2 for DDR
 		dvi_pins = platform.request("dvi", xdr = {
 			"red": 1, "green": 1, "blue": 1,
 			"v_sync": 1, "h_sync": 1, "enable": 1,
 			"px_clk": 2
 		})
+
+		# connect to the physical pins
 		m.d.comb += [
 			dvi_pins.red.eq(self.red),
-			dvi_pins.red.o_clk.eq(dvi_clock.clk39_750),
-			dvi_pins.green.eq(self.green),
-			dvi_pins.green.o_clk.eq(dvi_clock.clk39_750),
 			dvi_pins.blue.eq(self.blue),
-			dvi_pins.blue.o_clk.eq(dvi_clock.clk39_750),
+			dvi_pins.green.eq(self.green),
 			dvi_pins.v_sync.eq(dvi_timing.v_sync),
-			dvi_pins.v_sync.o_clk.eq(dvi_clock.clk39_750),
 			dvi_pins.h_sync.eq(dvi_timing.h_sync), 
-			dvi_pins.h_sync.o_clk.eq(dvi_clock.clk39_750),
-			dvi_pins.enable.eq(dvi_timing.data_enable), 
-			dvi_pins.enable.o_clk.eq(dvi_clock.clk39_750),
+			dvi_pins.enable.eq(dvi_timing.data_enable),
+
+			# buffered and DDR pins require a clock
+			dvi_pins.red.o_clk.eq(ClockSignal("px")),
+			dvi_pins.blue.o_clk.eq(ClockSignal("px")),
+			dvi_pins.green.o_clk.eq(ClockSignal("px")),
+			dvi_pins.v_sync.o_clk.eq(ClockSignal("px")),
+			dvi_pins.h_sync.o_clk.eq(ClockSignal("px")),
+			dvi_pins.enable.o_clk.eq(ClockSignal("px")),
+			dvi_pins.px_clk.o_clk.eq(ClockSignal("px")),
+
+			# non-inverting DDR output?
 			dvi_pins.px_clk.o0.eq(0),
 			dvi_pins.px_clk.o1.eq(1),
-			dvi_pins.px_clk.o_clk.eq(dvi_clock.clk39_750),
-			dvi_timing.px_clk.eq(dvi_clock.clk39_750)
 		]
 
 		# connect this module's outputs
-		m.d.comb += self.drawing.eq(dvi_timing.data_enable)
-		m.d.comb += self.x.eq(dvi_timing.x)
-		m.d.comb += self.y.eq(dvi_timing.y)
-		m.d.comb += self.clk_px.eq(dvi_clock.clk39_750)
-		m.d.comb += self.clk_sync.eq(dvi_clock.clk12)
-		
+		m.d.comb += [
+			self.drawing.eq(dvi_timing.data_enable),
+			self.x.eq(dvi_timing.x),
+			self.y.eq(dvi_timing.y),
+		]
+
 		return m
