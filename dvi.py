@@ -156,14 +156,14 @@ class DVI(Elaboratable):
 		self.red = Signal(4)
 		self.green = Signal(4)
 		self.blue = Signal(4)
-		
+
 		# outputs
 		self.drawing = Signal()
 		self.x = Signal(10)
 		self.y = Signal(10)
 		self.clk_px = Signal(attrs = {"keep": "true"})
 		self.clk_sync = Signal(attrs = {"keep": "true"})
-	
+
 	def elaborate(self, platform):
 		m = Module()
 
@@ -174,34 +174,24 @@ class DVI(Elaboratable):
 		m.submodules += dvi_timing
 
 		# connect to the physical pins
-		dvi_pins = platform.request("dvi")
-		m.d.comb += dvi_pins.red.eq(self.red)
-		m.d.comb += dvi_pins.green.eq(self.green)
-		m.d.comb += dvi_pins.blue.eq(self.blue)
-		m.d.comb += dvi_pins.v_sync.eq(dvi_timing.v_sync)
-		m.d.comb += dvi_pins.h_sync.eq(dvi_timing.h_sync)
-		m.d.comb += dvi_pins.enable.eq(dvi_timing.data_enable)
-		m.d.comb += dvi_pins.px_clk.eq(dvi_timing.px_clk)
-		m.d.comb += dvi_timing.px_clk.eq(dvi_clock.clk39_750)
-		
-		# I think the above commented lines are better like this according to
-		# https://projectf.io/posts/fpga-graphics/
-
-		#m.submodules.signals = Instance(
-		#	'SB_IO',
-		#	p_PIN_TYPE = Const(0b010100, 6),  # PIN_OUTPUT_REGISTERED
-		#	i_PACKAGEPIN = Cat(dvi_pins.h_sync, dvi_pins.v_sync, dvi_pins.enable, dvi_pins.red, dvi_pins.green, dvi_pins.blue),
-		#	i_OUTPUT_CLK = dvi_pins.px_clk,
-		#	o_D_OUT_0 = Cat(dvi_timing.h_sync, dvi_timing.v_sync, dvi_timing.data_enable, self.red, self.green, self.blue),
-		#)
-		#m.submodules.px_clk = Instance(
-		#	'SB_IO',
-		#	p_PIN_TYPE = Const(0b010000, 6),  # PIN_OUTPUT_DDR
-		#	i_PACKAGEPIN = dvi_pins.px_clk,
-		#	i_OUTPUT_CLK = dvi_clock.clk39_750,
-		#	o_D_OUT_0 = Const(0),
-		#	o_D_OUT_1 = Const(1)
-		#)
+		# xdr assigns 1 for buffered and 2 for DDR
+		dvi_pins = platform.request("dvi", xdr = {
+			"red": 1, "green": 1, "blue": 1,
+			"v_sync": 1, "h_sync": 1, "enable": 1,
+			"px_clk": 2
+		})
+		m.d.comb += [
+			dvi_pins.red.eq(self.red), 
+			dvi_pins.green.eq(self.green), 
+			dvi_pins.blue.eq(self.blue), 
+			dvi_pins.v_sync.eq(dvi_timing.v_sync), 
+			dvi_pins.h_sync.eq(dvi_timing.h_sync), 
+			dvi_pins.enable.eq(dvi_timing.data_enable), 
+			dvi_pins.px_clk.o0.eq(0),
+			dvi_pins.px_clk.o1.eq(1),
+			dvi_pins.px_clk.o_clk.eq(dvi_clock.clk39_750),
+			dvi_timing.px_clk.eq(dvi_clock.clk39_750)
+		]
 
 		# connect this module's outputs
 		m.d.comb += self.drawing.eq(dvi_timing.data_enable)
