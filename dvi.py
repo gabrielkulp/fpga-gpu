@@ -181,12 +181,18 @@ class DVI(Elaboratable):
 			"px_clk": 2
 		})
 		m.d.comb += [
-			dvi_pins.red.eq(self.red), 
-			dvi_pins.green.eq(self.green), 
-			dvi_pins.blue.eq(self.blue), 
-			dvi_pins.v_sync.eq(dvi_timing.v_sync), 
+			dvi_pins.red.eq(self.red),
+			dvi_pins.red.o_clk.eq(dvi_clock.clk39_750),
+			dvi_pins.green.eq(self.green),
+			dvi_pins.green.o_clk.eq(dvi_clock.clk39_750),
+			dvi_pins.blue.eq(self.blue),
+			dvi_pins.blue.o_clk.eq(dvi_clock.clk39_750),
+			dvi_pins.v_sync.eq(dvi_timing.v_sync),
+			dvi_pins.v_sync.o_clk.eq(dvi_clock.clk39_750),
 			dvi_pins.h_sync.eq(dvi_timing.h_sync), 
+			dvi_pins.h_sync.o_clk.eq(dvi_clock.clk39_750),
 			dvi_pins.enable.eq(dvi_timing.data_enable), 
+			dvi_pins.enable.o_clk.eq(dvi_clock.clk39_750),
 			dvi_pins.px_clk.o0.eq(0),
 			dvi_pins.px_clk.o1.eq(1),
 			dvi_pins.px_clk.o_clk.eq(dvi_clock.clk39_750),
