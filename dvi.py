@@ -176,12 +176,12 @@ class DVI(Elaboratable):
 
 		# connect to the physical pins
 		m.d.comb += [
-			dvi_pins.red.eq(self.red),
-			dvi_pins.blue.eq(self.blue),
-			dvi_pins.green.eq(self.green),
-			dvi_pins.v_sync.eq(dvi_timing.v_sync),
-			dvi_pins.h_sync.eq(dvi_timing.h_sync), 
-			dvi_pins.enable.eq(dvi_timing.data_enable),
+			dvi_pins.red.o.eq(self.red),
+			dvi_pins.blue.o.eq(self.blue),
+			dvi_pins.green.o.eq(self.green),
+			dvi_pins.v_sync.o.eq(dvi_timing.v_sync),
+			dvi_pins.h_sync.o.eq(dvi_timing.h_sync), 
+			dvi_pins.enable.o.eq(dvi_timing.data_enable),
 
 			# buffered and DDR pins require a clock
 			dvi_pins.red.o_clk.eq(ClockSignal("px")),
@@ -193,8 +193,8 @@ class DVI(Elaboratable):
 			dvi_pins.px_clk.o_clk.eq(ClockSignal("px")),
 
 			# non-inverting DDR output?
-			dvi_pins.px_clk.o0.eq(0),
-			dvi_pins.px_clk.o1.eq(1),
+			dvi_pins.px_clk.o0.eq(1),
+			dvi_pins.px_clk.o1.eq(0),
 		]
 
 		# connect this module's outputs
