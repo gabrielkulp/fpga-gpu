@@ -4,13 +4,13 @@ from amaranth.build import *
 
 vga_resource = Resource(
 	"dvi", 0,
-	Subsignal("red",    Pins("2 8 1 7",  dir="o", conn=("pmod", 0))),
-	Subsignal("green",  Pins("4 10 3 9", dir="o", conn=("pmod", 0))),
-	Subsignal("blue",   Pins("9 2 1 7",  dir="o", conn=("pmod", 1))),
-	Subsignal("v_sync", PinsN("4",  dir="o", conn=("pmod", 1))),
-	Subsignal("h_sync", PinsN("10", dir="o", conn=("pmod", 1))),
-	Subsignal("px_clk", Pins("8",  dir="o", conn=("pmod", 1))),
-	Subsignal("enable", Pins("3",  dir="o", conn=("pmod", 1)))
+	Subsignal("red",    Pins("8 2 7 1",  dir="o", conn=("pmod", 0))),
+	Subsignal("green",  Pins("10 4 9 3", dir="o", conn=("pmod", 0))),
+	Subsignal("blue",   Pins("3 8 7 1",  dir="o", conn=("pmod", 1))),
+	Subsignal("v_sync", Pins("10",  dir="o", conn=("pmod", 1))),
+	Subsignal("h_sync", Pins("4", dir="o", conn=("pmod", 1))),
+	Subsignal("px_clk", Pins("2",  dir="o", conn=("pmod", 1))),
+	Subsignal("enable", Pins("9",  dir="o", conn=("pmod", 1)))
 )
 
 
@@ -132,6 +132,7 @@ class VGA(Elaboratable):
 
 		# outputs
 		self.valid = Signal()
+		self.frame = Signal()
 		self.x = Signal(range(self.h_timing["active"]))
 		self.y = Signal(range(self.v_timing["active"]))
 
@@ -150,6 +151,7 @@ class VGA(Elaboratable):
 		# connect this module's outputs
 		m.d.comb += [
 			VGA_Timing_v.increment.eq(VGA_Timing_h.overflow),
+			self.frame.eq(VGA_Timing_v.overflow),
 			self.valid.eq(VGA_Timing_v.valid & VGA_Timing_h.valid),
 			self.x.eq(VGA_Timing_h.coord),
 			self.y.eq(VGA_Timing_v.coord)

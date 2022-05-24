@@ -2,7 +2,7 @@
 from amaranth import *
 from amaranth_boards.icebreaker import ICEBreakerPlatform
 
-from vga import VGA, VGA_Timing, vga_resource
+from vga import VGA, vga_resource
 
 
 class Top(Elaboratable):
@@ -14,17 +14,13 @@ class Top(Elaboratable):
 		vga = VGA()
 		m.submodules += vga
 
-		m.d.comb += vga.red.eq(vga.x[:4])
-		m.d.comb += vga.green.eq(vga.x[:4])
-		m.d.comb += vga.blue.eq(vga.y[:4])
+		counter = Signal(32)
+		with m.If(vga.frame == 1):
+			m.d.px += counter.eq(counter+1)
 
-		# blink LED every second to verify clock speed is actually 40MHz
-		led = _platform.request("led_r")
-		counter = Signal(range(39750000))
-		m.d.px += counter.eq(counter+1)
-		with m.If(counter == 39750000-1):
-			m.d.px += counter.eq(0)
-			m.d.px += led.o.eq(~led.o)
+		m.d.comb += vga.red.eq(vga.x[:4]-counter)
+		m.d.comb += vga.green.eq(vga.x[2:6])
+		m.d.comb += vga.blue.eq(vga.y[:4]-counter)
 
 		return m
 
