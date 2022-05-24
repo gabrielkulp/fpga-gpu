@@ -14,13 +14,41 @@ class Top(Elaboratable):
 		vga = VGA()
 		m.submodules += vga
 
-		counter = Signal(32)
+		sign = Signal(shape=signed(2), reset=1)
+		counter = Signal(range(32))
 		with m.If(vga.frame == 1):
-			m.d.px += counter.eq(counter+1)
+			m.d.px += counter.eq(counter+sign)
+		with m.If(counter == 30):
+			m.d.px += sign.eq(-1)
+		with m.Elif(counter == 1):
+			m.d.px += sign.eq(1)
+		
+		m.d.px += vga.red.eq(0) # just a nice dot grid
+		m.d.px += vga.green.eq((vga.x[0]^vga.y[0])<<2)
+		m.d.px += vga.blue.eq((vga.x[0]^vga.y[0])<<2)
 
-		m.d.comb += vga.red.eq(vga.x[:4]-counter)
-		m.d.comb += vga.green.eq(vga.x[2:6])
-		m.d.comb += vga.blue.eq(vga.y[:4]-counter)
+		with m.If(vga.y == 598):
+			m.d.px += vga.blue.eq(15)
+		with m.If(vga.y == 597):
+			m.d.px += vga.red.eq(15)
+
+		with m.If(vga.y == 1):
+			m.d.px += vga.blue.eq(15)
+		with m.If(vga.y == 2):
+			m.d.px += vga.red.eq(15)
+
+		with m.If(vga.x == 798):
+			m.d.px += vga.blue.eq(15)
+		with m.If(vga.x == 797):
+			m.d.px += vga.red.eq(15)
+
+		with m.If(vga.x == 1):
+			m.d.px += vga.blue.eq(15)
+		with m.If(vga.x == 2):
+			m.d.px += vga.red.eq(15)
+
+		with m.If((vga.x == 0) | (vga.x == 799) | (vga.y == 0) | (vga.y == 599)):
+			m.d.px += vga.green.eq(counter[-4:])
 
 		return m
 

@@ -58,9 +58,11 @@ class VGA_PLL(Elaboratable):
 
 
 class VGA_Timing(Elaboratable):
-	def __init__(self, lengths, coord_offset=1):
+	def __init__(self, lengths, coord_offset):
 		self.lengths = lengths
 		self.coord_offset = coord_offset
+		# coord_offset = 1 means that coordinates are supplied 1 clock cycle
+		#   before the corresponding pixel is drawn
 
 		# inputs
 		self.increment = Signal()
@@ -81,7 +83,7 @@ class VGA_Timing(Elaboratable):
 
 		with m.If(self.increment):
 			m.d.px += counter.eq(counter - 1)
-			m.d.px += self.coord.eq(Mux(self.valid, self.coord + 1, 0))
+			m.d.px += self.coord.eq(self.coord+1)
 
 			with m.FSM(name="state", reset="SYNC", domain="px"):
 				with m.State("SYNC"):
@@ -94,17 +96,20 @@ class VGA_Timing(Elaboratable):
 						m.next = "BACK_PORCH"
 
 				with m.State("BACK_PORCH"):
-					with m.If(counter == self.coord_offset):
-						m.d.px += self.valid.eq(1)
-						m.d.px += self.coord.eq(0)
+					if self.coord_offset >= 0:
+						with m.If(counter == self.coord_offset):
+							m.d.px += self.coord.eq(0)
 					with m.If(counter == 0):
+						m.d.px += self.valid.eq(1)
 						m.d.px += counter.eq(self.lengths["active"] - 1)
 						m.next = "ACTIVE"
 
 				with m.State("ACTIVE"):
-					with m.If(counter == self.coord_offset):
-						m.d.px += self.valid.eq(0)
+					if self.coord_offset < 0:
+						with m.If(counter == self.lengths["active"] - 1 + self.coord_offset):
+							m.d.px += self.coord.eq(0)
 					with m.If(counter == 0):
+						m.d.px += self.valid.eq(0)
 						m.d.px += counter.eq(self.lengths["fp"] - 1)
 						m.next = "FRONT_PORCH"
 
@@ -140,7 +145,7 @@ class VGA(Elaboratable):
 		m = Module()
 
 		m.submodules.clock = VGA_PLL()
-		m.submodules.timing_h = VGA_Timing_h = VGA_Timing(self.h_timing, 0)
+		m.submodules.timing_h = VGA_Timing_h = VGA_Timing(self.h_timing, 1)
 		m.submodules.timing_v = VGA_Timing_v = VGA_Timing(self.v_timing, 0)
 
 		# connect submodules together
