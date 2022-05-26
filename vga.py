@@ -2,6 +2,8 @@
 from amaranth import *
 from amaranth.build import *
 
+from structures import Coords, Color
+
 vga_resource = Resource(
 	"dvi", 0,
 	Subsignal("red",    Pins("8 2 7 1",  dir="o", conn=("pmod", 0))),
@@ -58,10 +60,10 @@ class VGA_PLL(Elaboratable):
 
 
 class VGA_Timing(Elaboratable):
-	def __init__(self, lengths, coord_offset):
+	def __init__(self, lengths, coord_delay):
 		self.lengths = lengths
-		self.coord_offset = coord_offset
-		# coord_offset = 1 means that coordinates are supplied 1 clock cycle
+		self.coord_delay = coord_delay
+		# coord_delay = 1 means that coordinates are supplied 1 clock cycle
 		#   before the corresponding pixel is drawn
 
 		# inputs
@@ -69,8 +71,9 @@ class VGA_Timing(Elaboratable):
 
 		# outputs:
 		self.coord = Signal(range(self.lengths["active"]))
+		self.drawing = Signal()  # if coordinates are in drawing range
 		self.sync = Signal(reset=1)
-		self.valid = Signal()
+		self.valid_data = Signal()  # for "data enable" pin
 		self.overflow = Signal()
 	
 	def elaborate(self, _platform):
@@ -80,6 +83,7 @@ class VGA_Timing(Elaboratable):
 		counter = Signal(width, reset=self.lengths["sync"]-1)
 
 		m.d.px += self.overflow.eq(0)
+		already_overflowed = Signal()
 
 		with m.If(self.increment):
 			m.d.px += counter.eq(counter - 1)
@@ -89,27 +93,28 @@ class VGA_Timing(Elaboratable):
 				with m.State("SYNC"):
 					with m.If(counter == 1):
 						# one cycle early so chained state updates in sync
-						m.d.px += self.overflow.eq(1)
+						m.d.px += self.overflow.eq(~already_overflowed)
+						m.d.px += already_overflowed.eq(1)
 					with m.Elif(counter == 0):
+						m.d.px += already_overflowed.eq(0)
 						m.d.px += self.sync.eq(0)
 						m.d.px += counter.eq(self.lengths["bp"] - 1)
 						m.next = "BACK_PORCH"
 
 				with m.State("BACK_PORCH"):
-					if self.coord_offset >= 0:
-						with m.If(counter == self.coord_offset):
-							m.d.px += self.coord.eq(0)
+					with m.If(counter == self.coord_delay):
+						m.d.px += self.coord.eq(0)
+						m.d.px += self.drawing.eq(1)
 					with m.If(counter == 0):
-						m.d.px += self.valid.eq(1)
+						m.d.px += self.valid_data.eq(1)
 						m.d.px += counter.eq(self.lengths["active"] - 1)
 						m.next = "ACTIVE"
 
 				with m.State("ACTIVE"):
-					if self.coord_offset < 0:
-						with m.If(counter == self.lengths["active"] - 1 + self.coord_offset):
-							m.d.px += self.coord.eq(0)
+					with m.If(counter == self.coord_delay):
+						m.d.px += self.drawing.eq(0)
 					with m.If(counter == 0):
-						m.d.px += self.valid.eq(0)
+						m.d.px += self.valid_data.eq(0)
 						m.d.px += counter.eq(self.lengths["fp"] - 1)
 						m.next = "FRONT_PORCH"
 
@@ -124,9 +129,10 @@ class VGA_Timing(Elaboratable):
 
 # instantiates the PLL and sets up chip IO for you
 class VGA(Elaboratable):
-	def __init__(self):
+	def __init__(self, delay=0):
 		# 800x600, 60Hz -> 40MHz px clock
 		# sync width, back porch, active region, front porch
+		self.delay = delay
 		self.h_timing = {"sync": 128, "bp": 88, "active": 800, "fp": 40}
 		self.v_timing = {"sync":   4, "bp": 23, "active": 600, "fp":  1}
 
@@ -134,18 +140,22 @@ class VGA(Elaboratable):
 		self.red   = Signal(4)
 		self.green = Signal(4)
 		self.blue  = Signal(4)
+		self.rgb = Color(self.red, self.green, self.blue)
 
 		# outputs
-		self.valid = Signal()
+		self.in_bounds = Signal()
+		self.valid_data = Signal()
+		self.line  = Signal()
 		self.frame = Signal()
 		self.x = Signal(range(self.h_timing["active"]))
 		self.y = Signal(range(self.v_timing["active"]))
+		self.coords = Coords(self.x, self.y)
 
 	def elaborate(self, platform):
 		m = Module()
 
 		m.submodules.clock = VGA_PLL()
-		m.submodules.timing_h = VGA_Timing_h = VGA_Timing(self.h_timing, 1)
+		m.submodules.timing_h = VGA_Timing_h = VGA_Timing(self.h_timing, self.delay)
 		m.submodules.timing_v = VGA_Timing_v = VGA_Timing(self.v_timing, 0)
 
 		# connect submodules together
@@ -156,10 +166,12 @@ class VGA(Elaboratable):
 		# connect this module's outputs
 		m.d.comb += [
 			VGA_Timing_v.increment.eq(VGA_Timing_h.overflow),
+			self.line.eq(VGA_Timing_h.overflow),
 			self.frame.eq(VGA_Timing_v.overflow),
-			self.valid.eq(VGA_Timing_v.valid & VGA_Timing_h.valid),
+			self.valid_data.eq(VGA_Timing_v.valid_data & VGA_Timing_h.valid_data),
 			self.x.eq(VGA_Timing_h.coord),
-			self.y.eq(VGA_Timing_v.coord)
+			self.y.eq(VGA_Timing_v.coord),
+			self.in_bounds.eq(VGA_Timing_h.drawing)
 		]
 
 		# xdr: 1 for buffered, 2 for DDR
@@ -174,7 +186,7 @@ class VGA(Elaboratable):
 			dvi_pins.red.o.eq(self.red),
 			dvi_pins.blue.o.eq(self.blue),
 			dvi_pins.green.o.eq(self.green),
-			dvi_pins.enable.o.eq(self.valid),
+			dvi_pins.enable.o.eq(self.valid_data),
 			dvi_pins.v_sync.o.eq(VGA_Timing_v.sync),
 			dvi_pins.h_sync.o.eq(VGA_Timing_h.sync), 
 
@@ -224,7 +236,7 @@ class TopSim(Elaboratable):
 			self.y.eq(vga_v.coord),
 			self.h_sync.eq(vga_h.sync),
 			self.v_sync.eq(vga_v.sync),
-			self.data_enable.eq(vga_h.valid & vga_v.valid),
+			self.data_enable.eq(vga_h.valid_data & vga_v.valid_data),
 		]
 
 		return m
