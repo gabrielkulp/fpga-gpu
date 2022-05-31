@@ -54,12 +54,11 @@ class FrameBuffer(Elaboratable):
 					pix[y-3][x+40] = i+1
 		init0 = pixels_to_fb(pix)
 
-		pix = [[i for i in range(16)]*10]
-		for i in range(119):
-			if i%2:
-				pix.append([2]*160)
-			else:
-				pix.append([3]*160)
+		pix = [[0]*160 for _ in range(120)]
+		for i in range(7):
+			for x in range(i*10,i*10+20):
+				for y in range(i*10+20,i*10+40):
+					pix[y-3][x+40] = 7-i
 		init1 = pixels_to_fb(pix)
 
 		m.submodules.fb0 = fb0 = FrameBufferRAM(self.fb_width, self.fb_height, init0)

@@ -5,6 +5,7 @@ from amaranth_boards.icebreaker import ICEBreakerPlatform
 from structures import Color, Coords
 from vga import VGA, vga_resource
 from framebuffer import FrameBuffer
+from lines import LineDrawer
 
 class Top(Elaboratable):
 	def __init__(self):
@@ -15,29 +16,25 @@ class Top(Elaboratable):
 
 		m.submodules.vga = vga = VGA(delay=4)
 
-		#sign = Signal(shape=signed(2), reset=1)
-		#counter = Signal(range(128))
-		#with m.If(vga.frame):# & (pre==0)
-		#	m.d.px += counter.eq(counter+sign)
-		#with m.If(counter == 127):
-		#	m.d.px += sign.eq(-1)
-		#with m.Elif(counter == 0):
-		#	m.d.px += sign.eq(1)
+		sign = Signal(shape=signed(2), reset=1)
+		counter_y = Signal(range(60))
+		with m.If(vga.frame):# & (pre==0)
+			m.d.px += counter_y.eq(counter_y+sign)
+		with m.If(counter_y == 59):
+			m.d.px += sign.eq(-1)
+		with m.Elif(counter_y == 0):
+			m.d.px += sign.eq(1)
 
-		#sign_2 = Signal(shape=signed(2), reset=1)
-		#counter_2 = Signal(range(128))
-		#pre = Signal(2)
-		#m.d.px += pre.eq(pre+vga.frame)
-		#with m.If(vga.frame & (pre==0)):
-		#	m.d.px += counter_2.eq(counter_2+sign_2)
-		#with m.If(counter_2 == 100):
-		#	m.d.px += sign_2.eq(-1)
-		#with m.Elif(counter_2 == 0):
-		#	m.d.px += sign_2.eq(1)
-
-		swap_counter = Signal(range(63))
-		m.d.px += swap_counter.eq(swap_counter+vga.frame)
-
+		sign_2 = Signal(shape=signed(2), reset=1)
+		counter_x = Signal(range(80))
+		pre = Signal(2)
+		m.d.px += pre.eq(pre+vga.frame)
+		with m.If(vga.frame & (pre==0)):
+			m.d.px += counter_x.eq(counter_x+sign_2)
+		with m.If(counter_x == 79):
+			m.d.px += sign_2.eq(-1)
+		with m.Elif(counter_x == 0):
+			m.d.px += sign_2.eq(1)
 
 		m.submodules.fb = fb = FrameBuffer()
 		
@@ -52,17 +49,34 @@ class Top(Elaboratable):
 		m.d.comb += [
 			fb.r_x.eq(vga.x>>2),
 			fb.r_y.eq(vga.y>>2),
-			fb.read_erase.eq(0),
-			#fb.swap.eq(vga.frame & (swap_counter==0)),
+			fb.read_erase.eq((vga.x[:2] == 3) & (vga.y[:2] == 3)),
+			fb.swap.eq(vga.frame),
 		]
 
-		btn = _platform.request("button")
-		last = Signal()
-		m.d.px += last.eq(btn.i)
-		with m.If(btn.i & ~last):
-			m.d.px += fb.swap.eq(1)
-		with m.Else():
-			m.d.px += fb.swap.eq(0)
+		m.submodules.line = line = LineDrawer(120,160)
+		m.d.comb += [
+			line.enable.eq(1),
+			line.endpoints[1].x.eq(80),
+			line.endpoints[1].y.eq(60),
+			line.endpoints[0].x.eq(80-40+counter_x),
+			line.endpoints[0].y.eq(60-30+counter_y),
+			line.update.eq(fb.swap),
+
+			fb.w_x.eq(line.coords.x),
+			fb.w_y.eq(line.coords.y),
+			fb.write.eq(line.write),
+			fb.w_data.eq(4)
+		]
+
+
+
+		#btn = _platform.request("button")
+		#last = Signal()
+		#m.d.px += last.eq(btn.i)
+		#with m.If(btn.i & ~last):
+		#	m.d.px += fb.swap.eq(1)
+		#with m.Else():
+		#	m.d.px += fb.swap.eq(0)
 
 		return m
 
