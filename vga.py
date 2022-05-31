@@ -16,11 +16,13 @@ vga_resource = Resource(
 )
 
 
-# 40MHz clock for 60Hz display.
+# 40MHz clock for 800x600 60Hz display.
 # also still outputs 12MHz for running main logic
+# 25MHz for 640x480 display
 class VGA_PLL(Elaboratable):
 	def __init__(self):
-		self.clk39_750 = Signal(attrs = {"keep": "true"})
+		#self.clk39_750 = Signal(attrs = {"keep": "true"})
+		self.clk25_125 = Signal(attrs = {"keep": "true"})
 		self.clk12 = Signal(attrs = {"keep": "true"})
 	
 	def elaborate(self, platform):
@@ -33,28 +35,33 @@ class VGA_PLL(Elaboratable):
 			i_BYPASS = Const(0),
 
 			o_PLLOUTGLOBALA = self.clk12,
-			o_PLLOUTGLOBALB = self.clk39_750,
+			#o_PLLOUTGLOBALB = self.clk39_750,
+			o_PLLOUTGLOBALB = self.clk25_125,
 
 			p_FEEDBACK_PATH = 'SIMPLE',
 			p_PLLOUT_SELECT_PORTB = 'GENCLK',
 
 			p_DIVR = 0,
-			p_DIVF = 52,
-			p_DIVQ = 4,
+			#p_DIVF = 52,
+			#p_DIVQ = 4,
+			p_DIVF = 66,
+			p_DIVQ = 5,
 			p_FILTER_RANGE = 1
 		)
 
 		# redefine sync domain to be driven by this 12MHz output and
 		# add a new px domain. Both domains will be available everywhere
 		platform.add_clock_constraint(self.clk12, 12e6)
-		platform.add_clock_constraint(self.clk39_750, 39.750e6)
+		#platform.add_clock_constraint(self.clk39_750, 39.750e6)
+		platform.add_clock_constraint(self.clk25_125, 25.125e6)
 		m.domains += [
 			ClockDomain('sync'),
 			ClockDomain('px')
 		]
 		m.d.comb += [
 			ClockSignal('sync').eq(self.clk12),
-			ClockSignal('px').eq(self.clk39_750)
+			#ClockSignal('px').eq(self.clk39_750)
+			ClockSignal('px').eq(self.clk25_125)
 		]
 		return m
 
@@ -133,8 +140,10 @@ class VGA(Elaboratable):
 		# 800x600, 60Hz -> 40MHz px clock
 		# sync width, back porch, active region, front porch
 		self.delay = delay
-		self.h_timing = {"sync": 128, "bp": 88, "active": 800, "fp": 40}
-		self.v_timing = {"sync":   4, "bp": 23, "active": 600, "fp":  1}
+		#self.h_timing = {"sync": 128, "bp": 88, "active": 800, "fp": 40}
+		#self.v_timing = {"sync":   4, "bp": 23, "active": 600, "fp":  1}
+		self.h_timing = {"sync": 96, "bp": 48, "active": 640, "fp": 16}
+		self.v_timing = {"sync":  2, "bp": 33, "active": 480, "fp": 10}
 
 		# inputs
 		self.red   = Signal(4)
