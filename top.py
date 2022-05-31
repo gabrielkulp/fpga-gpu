@@ -5,7 +5,7 @@ from amaranth_boards.icebreaker import ICEBreakerPlatform
 from structures import Color, Coords
 from vga import VGA, vga_resource
 from framebuffer import FrameBuffer
-from lines import LineDrawer
+from lines import LineSet
 
 class Top(Elaboratable):
 	def __init__(self):
@@ -53,14 +53,48 @@ class Top(Elaboratable):
 			fb.swap.eq(vga.frame),
 		]
 
-		m.submodules.line = line = LineDrawer(120,160)
+		m.submodules.line = line = LineSet(160,120, 8)
 		m.d.comb += [
-			line.enable.eq(1),
-			line.endpoints[1].x.eq(80),
-			line.endpoints[1].y.eq(60),
-			line.endpoints[0].x.eq(80-40+counter_x),
-			line.endpoints[0].y.eq(60-30+counter_y),
-			line.update.eq(fb.swap),
+			line.segments[0][0].x.eq(20),
+			line.segments[0][0].y.eq(20),
+			line.segments[0][1].x.eq(80-40-5+counter_x),
+			line.segments[0][1].y.eq(60-30-5+counter_y),
+
+			line.segments[1][0].x.eq(140),
+			line.segments[1][0].y.eq(20),
+			line.segments[1][1].x.eq(80-40+5+counter_x),
+			line.segments[1][1].y.eq(60-30-5+counter_y),
+
+			line.segments[2][0].x.eq(20),
+			line.segments[2][0].y.eq(100),
+			line.segments[2][1].x.eq(80-40-5+counter_x),
+			line.segments[2][1].y.eq(60-30+5+counter_y),
+
+			line.segments[3][0].x.eq(140),
+			line.segments[3][0].y.eq(100),
+			line.segments[3][1].x.eq(80-40+5+counter_x),
+			line.segments[3][1].y.eq(60-30+5+counter_y),
+			# inner square
+			line.segments[4][0].x.eq(80-40-5+counter_x),
+			line.segments[4][0].y.eq(60-30-5+counter_y),
+			line.segments[4][1].x.eq(80-40-5+counter_x),
+			line.segments[4][1].y.eq(60-30+5+counter_y),
+
+			line.segments[5][0].x.eq(80-40-5+counter_x),
+			line.segments[5][0].y.eq(60-30+5+counter_y),
+			line.segments[5][1].x.eq(80-40+5+counter_x),
+			line.segments[5][1].y.eq(60-30+5+counter_y),
+
+			line.segments[6][0].x.eq(80-40+5+counter_x),
+			line.segments[6][0].y.eq(60-30+5+counter_y),
+			line.segments[6][1].x.eq(80-40+5+counter_x),
+			line.segments[6][1].y.eq(60-30-5+counter_y),
+
+			line.segments[7][0].x.eq(80-40+5+counter_x),
+			line.segments[7][0].y.eq(60-30-5+counter_y),
+			line.segments[7][1].x.eq(80-40-5+counter_x),
+			line.segments[7][1].y.eq(60-30-5+counter_y),
+			line.start.eq(fb.swap),
 
 			fb.w_x.eq(line.coords.x),
 			fb.w_y.eq(line.coords.y),
