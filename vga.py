@@ -146,19 +146,14 @@ class VGA(Elaboratable):
 		self.v_timing = {"sync":  2, "bp": 33, "active": 480, "fp": 10}
 
 		# inputs
-		self.red   = Signal(4)
-		self.green = Signal(4)
-		self.blue  = Signal(4)
-		self.rgb = Color(self.red, self.green, self.blue)
+		self.color = Color(4)
 
 		# outputs
 		self.in_bounds = Signal()
 		self.valid_data = Signal()
 		self.line  = Signal()
 		self.frame = Signal()
-		self.x = Signal(range(self.h_timing["active"]))
-		self.y = Signal(range(self.v_timing["active"]))
-		self.coords = Coords(self.x, self.y)
+		self.coords = Coords(self.h_timing["active"], self.v_timing["active"])
 
 	def elaborate(self, platform):
 		m = Module()
@@ -178,8 +173,8 @@ class VGA(Elaboratable):
 			self.line.eq(VGA_Timing_h.overflow),
 			self.frame.eq(VGA_Timing_v.overflow),
 			self.valid_data.eq(VGA_Timing_v.valid_data & VGA_Timing_h.valid_data),
-			self.x.eq(VGA_Timing_h.coord),
-			self.y.eq(VGA_Timing_v.coord),
+			self.coords.x.eq(VGA_Timing_h.coord),
+			self.coords.y.eq(VGA_Timing_v.coord),
 			self.in_bounds.eq(VGA_Timing_h.drawing)
 		]
 
@@ -192,9 +187,9 @@ class VGA(Elaboratable):
 
 		# connect to the physical pins
 		m.d.comb += [
-			dvi_pins.red.o.eq(self.red),
-			dvi_pins.blue.o.eq(self.blue),
-			dvi_pins.green.o.eq(self.green),
+			dvi_pins.red.o.eq(self.color.r),
+			dvi_pins.blue.o.eq(self.color.b),
+			dvi_pins.green.o.eq(self.color.g),
 			dvi_pins.enable.o.eq(self.valid_data),
 			dvi_pins.v_sync.o.eq(VGA_Timing_v.sync),
 			dvi_pins.h_sync.o.eq(VGA_Timing_h.sync), 

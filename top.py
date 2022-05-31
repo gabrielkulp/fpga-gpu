@@ -54,12 +54,12 @@ class Top(Elaboratable):
 
 		for i, color in enumerate(colorscheme):
 			m.d.comb += fb.palette[i].eq(color)
-		m.d.px += Cat(vga.blue, vga.green, vga.red).eq(fb.color)
+		m.d.px += vga.color.rgb().eq(fb.color)
 
 		m.d.comb += [
-			fb.r_x.eq(vga.x>>2),
-			fb.r_y.eq(vga.y>>2),
-			fb.read_erase.eq((vga.x[:2] == 3) & (vga.y[:2] == 3)),
+			fb.r_x.eq(vga.coords.x>>2),
+			fb.r_y.eq(vga.coords.y>>2),
+			fb.read_erase.eq((vga.coords.x[:2] == 3) & (vga.coords.y[:2] == 3)),
 			fb.swap.eq(vga.frame),
 		]
 

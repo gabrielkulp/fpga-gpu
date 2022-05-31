@@ -7,28 +7,27 @@ class LineDrawer(Elaboratable):
 		self.max_y = max_y
 
 		# in
-		self.endpoints = [Coords(Signal(range(max_x)), Signal(range(max_y))),
-				Coords(Signal(range(max_x)), Signal(range(max_y)))]
+		self.endpoints = [Coords(max_x, max_y), Coords(max_x, max_y)]
 		self.start = Signal()
 
 		# out
-		self.coords = Coords(Signal(range(max_x)), Signal(range(max_y)))
+		self.coords = Coords(max_x, max_y)
 		self.write = Signal()
 		self.done = Signal()
 
 	def elaborate(self, _platform):
 		m = Module()
 
-		end = Coords(Signal(range(self.max_x)), Signal(range(self.max_y)))
+		end = Coords(self.max_x, self.max_y)
 
 		dx = Signal(range(-self.max_x, self.max_x))
-		sx = Signal(range(-self.max_x,self.max_x))
+		sx = Signal(range(-self.max_x, self.max_x))
 		dy = Signal(range(-self.max_y, self.max_y))
-		sy = Signal(range(-self.max_y,self.max_y))
+		sy = Signal(range(-self.max_y, self.max_y))
 		error = Signal(range(-self.max_x<<1, self.max_x<<1))
 
-		x = Signal(range(-self.max_x,self.max_x))
-		y = Signal(range(-self.max_y,self.max_y))
+		x = Signal(range(-self.max_x, self.max_x))
+		y = Signal(range(-self.max_y, self.max_y))
 		m.d.comb += self.coords.x.eq(x)
 		m.d.comb += self.coords.y.eq(y)
 
@@ -57,7 +56,7 @@ class LineDrawer(Elaboratable):
 						m.d.px += sy.eq(1)
 						m.d.px += dy.eq(self.endpoints[0].y - self.endpoints[1].y)
 					m.next = "calculate"
-			
+
 			with m.State("calculate"):
 				m.d.px += [
 					error.eq(dx + dy),
@@ -95,19 +94,17 @@ class LineSet(Elaboratable):
 		self.length = length
 		self.max_x = max_x
 		self.max_y = max_y
-		
+
 		# in
 		self.segments = Array([
-			[
-				Coords(Signal(range(max_x)), Signal(range(max_y))),
-				Coords(Signal(range(max_x)), Signal(range(max_y)))
-			] for _ in range(length)
+			[Coords(max_x, max_y), Coords(max_x, max_y)]
+			for _ in range(length)
 		])
 		self.start = Signal()
-		
+
 		# out
 		self.done = Signal()
-		self.coords = Coords(Signal(range(max_x)), Signal(range(max_x)))
+		self.coords = Coords(max_x, max_y)
 		self.write = Signal()
 	
 	def elaborate(self, _platform):
