@@ -16,9 +16,21 @@ class Top(Elaboratable):
 
 		m.submodules.vga = vga = VGA(delay=4)
 
+		btn = _platform.request("button")
+		last = Signal()
+		step = Signal()
+		play = Signal(reset=1)
+		m.d.px += play.eq(play+step)
+		m.d.px += step.eq(0)
+		with m.If(vga.frame):
+			m.d.px += last.eq(btn.i)
+			with m.If(btn.i & ~last):
+				m.d.px += step.eq(1)
+		
+
 		sign = Signal(shape=signed(2), reset=1)
 		counter_y = Signal(range(60))
-		with m.If(vga.frame):# & (pre==0)
+		with m.If(vga.frame & play):
 			m.d.px += counter_y.eq(counter_y+sign)
 		with m.If(counter_y == 59):
 			m.d.px += sign.eq(-1)
@@ -27,9 +39,7 @@ class Top(Elaboratable):
 
 		sign_2 = Signal(shape=signed(2), reset=1)
 		counter_x = Signal(range(80))
-		pre = Signal(2)
-		m.d.px += pre.eq(pre+vga.frame)
-		with m.If(vga.frame & (pre==0)):
+		with m.If(vga.frame & play):
 			m.d.px += counter_x.eq(counter_x+sign_2)
 		with m.If(counter_x == 79):
 			m.d.px += sign_2.eq(-1)
@@ -94,7 +104,6 @@ class Top(Elaboratable):
 			line.segments[7][0].y.eq(60-30-5+counter_y),
 			line.segments[7][1].x.eq(80-40-5+counter_x),
 			line.segments[7][1].y.eq(60-30-5+counter_y),
-			line.start.eq(fb.swap),
 
 			fb.w_x.eq(line.coords.x),
 			fb.w_y.eq(line.coords.y),
@@ -102,15 +111,8 @@ class Top(Elaboratable):
 			fb.w_data.eq(4)
 		]
 
-
-
-		#btn = _platform.request("button")
-		#last = Signal()
-		#m.d.px += last.eq(btn.i)
-		#with m.If(btn.i & ~last):
-		#	m.d.px += fb.swap.eq(1)
-		#with m.Else():
-		#	m.d.px += fb.swap.eq(0)
+		# do this one step after updating the counters
+		m.d.px += line.start.eq(vga.frame)
 
 		return m
 
