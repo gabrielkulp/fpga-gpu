@@ -54,7 +54,7 @@ class Top(Elaboratable):
 
 		for i, color in enumerate(colorscheme):
 			m.d.comb += fb.palette[i].eq(color)
-		m.d.px += vga.color.rgb().eq(fb.color)
+		m.d.px += vga.color.rgb.eq(fb.color)
 
 		m.d.comb += [
 			fb.r_x.eq(vga.coords.x>>2),
@@ -117,8 +117,11 @@ class Top(Elaboratable):
 		return m
 
 
-from amaranth.build import *
-if __name__ == "__main__":
+def build_and_run():
 	board = ICEBreakerPlatform()
 	board.add_resources([vga_resource])
-	board.build(Top(), do_program=True, nextpnr_opts="--timing-allow-fail")
+	board.build(Top(), do_program=True)
+
+from amaranth.build import *
+if __name__ == "__main__":
+	build_and_run()

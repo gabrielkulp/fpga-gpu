@@ -11,4 +11,7 @@ class Color:
 		self.r = Signal(bits_per_channel)
 		self.g = Signal(bits_per_channel)
 		self.b = Signal(bits_per_channel)
-		self.rgb = lambda: Cat(self.b, self.g, self.r)
+
+	@property
+	def rgb(self):
+		return Cat(self.b, self.g, self.r)
