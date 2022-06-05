@@ -143,3 +143,54 @@ class LineSet(Elaboratable):
 				m.d.px += counter.eq(0)
 		
 		return m
+
+
+class SegmentMemory(Elaboratable):
+	def __init__(self, max_x, max_y, max_count):
+		from math import log, ceil
+		if ceil(log(max_x-1, 2)) + ceil(log(max_y-1, 2)) > 16:
+			print("Coordinates are too large to fit in 1 line of SPRAM.")
+			exit(1)
+		if max_count >= 2**14:
+			print("Line count is too large to fit in 1 SPRAM")
+		
+		# in
+		self.index = Signal(range(max_count))
+		self.endpoints_in = Array[Coords(max_x, max_y), Coords(max_x, max_y)]
+		self.write = Signal()
+
+		# out
+		self.endpoints_out = Array[Coords(max_x, max_y), Coords(max_x, max_y)]
+	
+	def elaborate(self, _platform):
+		m = Module()
+
+		m.submodules.start = Instance(
+			'SB_SPRAM256KA',
+			i_ADDRESS = self.index,
+			i_DATAIN = self.endpoints_in[0].xy,
+			i_MASKWREN = Const(0b1111, 4),
+			i_WREN = self.write,
+			i_CHIPSELECT = 1,
+			i_CLOCK = ClockSignal("px"),
+			i_STANDBY = 0,
+			i_SLEEP = 0,
+			i_POWEROFF = 0,
+			o_DATAOUT = self.endpoints_out[0].xy
+		)
+
+		m.submodules.end = Instance(
+			'SB_SPRAM256KA',
+			i_ADDRESS = self.index,
+			i_DATAIN = self.endpoints_in[1].xy,
+			i_MASKWREN = Const(0b1111, 4),
+			i_WREN = self.write,
+			i_CHIPSELECT = 1,
+			i_CLOCK = ClockSignal("px"),
+			i_STANDBY = 0,
+			i_SLEEP = 0,
+			i_POWEROFF = 0,
+			o_DATAOUT = self.endpoints_out[1].xy
+		)
+
+		return m

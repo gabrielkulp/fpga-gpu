@@ -1,4 +1,5 @@
 from amaranth import *
+from structures import Coords, Color
 
 
 class FrameBufferRAM(Elaboratable):
@@ -30,18 +31,15 @@ class FrameBuffer(Elaboratable):
 		self.fb_width  = 128
 		self.fb_height = 160
 
-		# this isn't quite the right calculation, but it works for 160x120
-		self.r_x = Signal(range(self.width))
-		self.r_y = Signal(range(self.height))
-		self.w_x = Signal(range(self.width))
-		self.w_y = Signal(range(self.height))
-		self.r_data = Signal(3)
+		self.coords_r = Coords(self.width, self.height)
+		self.coords_w = Coords(self.width, self.height)
 		self.w_data = Signal(3)
 		self.write = Signal()
 		self.swap = Signal()
-		self.read_erase = Signal()
+		self.read_fill = Signal()
+		self.fill_data = Signal(3)
 		self.palette = Array(Signal(12) for _ in range(16))
-		self.color = Signal(12)
+		self.color = Color(12)
 
 	def elaborate(self, _platform):
 		m = Module()
@@ -64,13 +62,6 @@ class FrameBuffer(Elaboratable):
 		m.submodules.fb0 = fb0 = FrameBufferRAM(self.fb_width, self.fb_height, init0)
 		m.submodules.fb1 = fb1 = FrameBufferRAM(self.fb_width, self.fb_height, init1)
 
-		r_addr = Signal(self.r_x.width + self.r_y.width)
-		w_addr = Signal(r_addr.width)
-		m.d.comb += [
-			r_addr.eq(Cat(self.r_y, self.r_x)),
-			w_addr.eq(Cat(self.w_y, self.w_x)),
-		]
-
 		selected = Signal()  # selected fb is the one we write to
 		with m.If(self.swap):
 			m.d.px += selected.eq(~selected)
@@ -82,25 +73,25 @@ class FrameBuffer(Elaboratable):
 
 		with m.If(selected):
 			m.d.px += [
-				fb0.wp.addr.eq(w_addr),
+				fb0.wp.addr.eq(self.coords_w.xy),
 				fb0.wp.data.eq(self.w_data),
 				fb0.wp.en.eq(self.write),
-				fb1.rp.addr.eq(r_addr),
-				fb1.wp.addr.eq(r_addr),
-				fb1.wp.data.eq(0),
-				fb1.wp.en.eq(self.read_erase),
-				self.color.eq(self.palette[fb1.rp.data]),
+				fb1.rp.addr.eq(self.coords_r.xy),
+				fb1.wp.addr.eq(self.coords_r.xy),
+				fb1.wp.data.eq(self.fill_data),
+				fb1.wp.en.eq(self.read_fill),
+				self.color.rgb.eq(self.palette[fb1.rp.data]),
 			]
 		with m.Else():
 			m.d.px += [
-				fb1.wp.addr.eq(w_addr),
+				fb1.wp.addr.eq(self.coords_w.xy),
 				fb1.wp.data.eq(self.w_data),
 				fb1.wp.en.eq(self.write),
-				fb0.rp.addr.eq(r_addr),
-				fb0.wp.addr.eq(r_addr),
-				fb0.wp.data.eq(0),
-				fb0.wp.en.eq(self.read_erase),
-				self.color.eq(self.palette[fb0.rp.data]),
+				fb0.rp.addr.eq(self.coords_r.xy),
+				fb0.wp.addr.eq(self.coords_r.xy),
+				fb0.wp.data.eq(self.fill_data),
+				fb0.wp.en.eq(self.read_fill),
+				self.color.rgb.eq(self.palette[fb0.rp.data]),
 			]
 
 		return m
