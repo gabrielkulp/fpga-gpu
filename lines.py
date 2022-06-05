@@ -7,7 +7,7 @@ class LineDrawer(Elaboratable):
 		self.max_y = max_y
 
 		# in
-		self.endpoints = [Coords(max_x, max_y), Coords(max_x, max_y)]
+		self.endpoints = Array([Coords(max_x, max_y), Coords(max_x, max_y)])
 		self.start = Signal()
 
 		# out
@@ -89,78 +89,22 @@ class LineDrawer(Elaboratable):
 		return m
 
 
-class LineSet(Elaboratable):
-	def __init__(self, max_x, max_y, length):
-		self.length = length
-		self.max_x = max_x
-		self.max_y = max_y
-
-		# in
-		self.segments = Array([
-			[Coords(max_x, max_y), Coords(max_x, max_y)]
-			for _ in range(length)
-		])
-		self.start = Signal()
-
-		# out
-		self.done = Signal()
-		self.coords = Coords(max_x, max_y)
-		self.write = Signal()
-	
-	def elaborate(self, _platform):
-		m = Module()
-		counter = Signal(range(len(self.segments)+1))
-
-		m.submodules.line = line = LineDrawer(self.max_x, self.max_y)
-		m.d.comb += [
-			self.coords.x.eq(line.coords.x),
-			self.coords.y.eq(line.coords.y),
-			self.write.eq(line.write)
-		]
-
-		m.d.px += self.done.eq(0)
-		m.d.px += line.start.eq(0)
-		with m.If((counter == 0) & self.start):
-			m.d.px += [
-				line.endpoints[0].x.eq(self.segments[0][0].x),
-				line.endpoints[0].y.eq(self.segments[0][0].y),
-				line.endpoints[1].x.eq(self.segments[0][1].x),
-				line.endpoints[1].y.eq(self.segments[0][1].y),
-				line.start.eq(1),
-				counter.eq(counter+1)
-			]
-		with m.If((counter != 0) & line.done):
-			m.d.px += [
-				line.endpoints[0].x.eq(self.segments[counter][0].x),
-				line.endpoints[0].y.eq(self.segments[counter][0].y),
-				line.endpoints[1].x.eq(self.segments[counter][1].x),
-				line.endpoints[1].y.eq(self.segments[counter][1].y),
-				line.start.eq(1)
-			]
-			with m.If(counter != self.length-1):
-				m.d.px += counter.eq(counter+1)
-			with m.Else():
-				m.d.px += counter.eq(0)
-		
-		return m
-
-
-class SegmentMemory(Elaboratable):
+class _SegmentMemory(Elaboratable):
 	def __init__(self, max_x, max_y, max_count):
 		from math import log, ceil
 		if ceil(log(max_x-1, 2)) + ceil(log(max_y-1, 2)) > 16:
 			print("Coordinates are too large to fit in 1 line of SPRAM.")
 			exit(1)
 		if max_count >= 2**14:
-			print("Line count is too large to fit in 1 SPRAM")
+			print("Line count is too large to fit in 2 SPRAMs")
 		
 		# in
 		self.index = Signal(range(max_count))
-		self.endpoints_in = Array[Coords(max_x, max_y), Coords(max_x, max_y)]
+		self.endpoints_in = Array([Coords(max_x, max_y), Coords(max_x, max_y)])
 		self.write = Signal()
 
 		# out
-		self.endpoints_out = Array[Coords(max_x, max_y), Coords(max_x, max_y)]
+		self.endpoints_out = Array([Coords(max_x, max_y), Coords(max_x, max_y)])
 	
 	def elaborate(self, _platform):
 		m = Module()
@@ -193,4 +137,109 @@ class SegmentMemory(Elaboratable):
 			o_DATAOUT = self.endpoints_out[1].xy
 		)
 
+		return m
+
+
+class _SegmentAccessArbiter(Elaboratable):
+	def __init__(self, max_x, max_y, max_count):
+		self.max_x = max_x
+		self.max_y = max_y
+		self.max_count = max_count
+
+		# line renderer in
+		self.index_read = Signal(range(max_count))
+		self.request_read = Signal()
+
+		# UART in
+		self.index_write = Signal(range(max_count))
+		self.request_write = Signal()
+		self.endpoints_in = Array([Coords(max_x, max_y), Coords(max_x, max_y)])
+
+		# out
+		self.endpoints_out = Array([Coords(max_x, max_y), Coords(max_x, max_y)])
+		self.write_done = Signal()
+	
+	def elaborate(self, _platform):
+		m = Module()
+		m.submodules.memory = mem = _SegmentMemory(self.max_x, self.max_y, self.max_count)
+
+		pending_write = Signal()
+		pending_data = Array([Coords(self.max_x, self.max_y), Coords(self.max_x, self.max_y)])
+
+		# reading gets priority in the edge case that both happen simultaneously
+		with m.If(self.request_read):
+			m.d.px += mem.write.eq(0)
+			m.d.px += mem.index.eq(self.index_read)
+		with m.Else():
+			with m.If(pending_write):
+				pending_write.eq(0)
+				m.d.px += [
+					self.write_done.eq(1),
+					mem.write.eq(1),
+					mem.index.eq(self.index_write),
+					mem.endpoints_in.eq(pending_data)
+				]
+		
+		m.d.comb += self.endpoints_out.eq(mem.endpoints_out)
+
+		with m.If(self.request_write):
+			m.d.px += pending_write.eq(1)
+			m.d.px += pending_data.eq(self.endpoints_in)
+
+		return m
+
+
+class LineSet(Elaboratable):
+	def __init__(self, max_x, max_y, length):
+		self.length = length
+		self.max_x = max_x
+		self.max_y = max_y
+
+		# in
+		self.segments = Array([
+			Array([Coords(max_x, max_y), Coords(max_x, max_y)])
+			for _ in range(length)
+		])
+		self.start = Signal()
+
+		# out
+		self.done = Signal()
+		self.coords = Coords(max_x, max_y)
+		self.write = Signal()
+	
+	def elaborate(self, _platform):
+		m = Module()
+		counter = Signal(range(self.length))
+
+		m.submodules.line = line = LineDrawer(self.max_x, self.max_y)
+		m.d.comb += [
+			self.coords.x.eq(line.coords.x),
+			self.coords.y.eq(line.coords.y),
+			self.write.eq(line.write)
+		]
+
+		m.d.px += self.done.eq(0)
+		m.d.px += line.start.eq(0)
+		with m.If((counter == 0) & self.start):
+			m.d.px += [
+				line.endpoints[0].x.eq(self.segments[0][0].x),
+				line.endpoints[0].y.eq(self.segments[0][0].y),
+				line.endpoints[1].x.eq(self.segments[0][1].x),
+				line.endpoints[1].y.eq(self.segments[0][1].y),
+				line.start.eq(1),
+				counter.eq(counter+1)
+			]
+		with m.If((counter != 0) & line.done):
+			m.d.px += [
+				line.endpoints[0].x.eq(self.segments[counter][0].x),
+				line.endpoints[0].y.eq(self.segments[counter][0].y),
+				line.endpoints[1].x.eq(self.segments[counter][1].x),
+				line.endpoints[1].y.eq(self.segments[counter][1].y),
+				line.start.eq(1)
+			]
+			with m.If(counter != self.length-1):
+				m.d.px += counter.eq(counter+1)
+			with m.Else():
+				m.d.px += counter.eq(0)
+		
 		return m

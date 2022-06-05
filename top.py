@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+from platform import platform
 from amaranth import *
 from amaranth_boards.icebreaker import ICEBreakerPlatform
+from structures import Coords
 
-from structures import Color, Coords
+from uart import UART
 from vga import VGA, vga_resource
 from framebuffer import FrameBuffer
 from lines import LineSet
@@ -11,12 +13,12 @@ class Top(Elaboratable):
 	def __init__(self):
 		self.what = Signal()
 
-	def elaborate(self, _platform):
+	def elaborate(self, platform):
 		m = Module()
 
-		m.submodules.vga = vga = VGA(delay=4)
+		m.submodules.vga = vga = VGA(delay=2)
 
-		btn = _platform.request("button")
+		btn = platform.request("button")
 		last = Signal()
 		step = Signal()
 		play = Signal(reset=1)
@@ -72,29 +74,54 @@ class Top(Elaboratable):
 		m.d.comb += [
 			fb.coords_r.x.eq(vga.coords.x>>2),
 			fb.coords_r.y.eq(vga.coords.y>>2),
-			fb.read_fill.eq((vga.coords.x[:2] == 3) & (vga.coords.y[:2] == 3)),
-			fb.swap.eq(vga.frame),
+			fb.read_fill.eq(vga.valid_data & (vga.coords.x[:2] == 3) & (vga.coords.y[:2] == 3)),
+			fb.swap.eq(vga.frame)
+		]
+
+		m.submodules.uart = uart = UART(platform.request("uart"))
+		led = platform.request("led")
+		m.d.comb += led.o.eq(uart.rx_error)
+
+		point = Coords(160, 120)
+
+		with m.FSM(reset="IDLE", domain="px"):
+			with m.State("IDLE"):
+				with m.If(uart.rx_ready):
+					m.next = "Y"
+					m.d.px += point.x.eq(uart.rx_data)
+			with m.State("Y"):
+				with m.If(uart.rx_ready):
+					m.next = "IDLE"
+					m.d.px += point.y.eq(uart.rx_data)
+
+		# auto-reply with data immediately
+		empty = Signal(reset=1)
+		# auto-reply with `data` I think?
+		m.d.comb += [
+			uart.rx_ack.eq(1), # mark received to not enter error state
+			uart.tx_data.eq(~uart.rx_data),
+			uart.tx_ready.eq(1)
 		]
 
 		m.submodules.line = line = LineSet(160,120, 8)
 		m.d.comb += [
-			line.segments[0][0].x.eq(20),
-			line.segments[0][0].y.eq(20),
+			line.segments[0][0].xy.eq(point.xy),
+			#line.segments[0][0].y.eq(),
 			line.segments[0][1].x.eq(80-40-5+counter_x+counter_z),
 			line.segments[0][1].y.eq(60-30-5+counter_y+counter_z),
 
-			line.segments[1][0].x.eq(140),
-			line.segments[1][0].y.eq(20),
+			line.segments[1][0].x.eq(159),
+			line.segments[1][0].y.eq(0),
 			line.segments[1][1].x.eq(80-40+5+counter_x+counter_z),
 			line.segments[1][1].y.eq(60-30-5+counter_y-counter_z),
 
-			line.segments[2][0].x.eq(20),
-			line.segments[2][0].y.eq(100),
+			line.segments[2][0].x.eq(0),
+			line.segments[2][0].y.eq(119),
 			line.segments[2][1].x.eq(80-40-5+counter_x-counter_z),
 			line.segments[2][1].y.eq(60-30+5+counter_y+counter_z),
 
-			line.segments[3][0].x.eq(140),
-			line.segments[3][0].y.eq(100),
+			line.segments[3][0].x.eq(159),
+			line.segments[3][0].y.eq(119),
 			line.segments[3][1].x.eq(80-40+5+counter_x-counter_z),
 			line.segments[3][1].y.eq(60-30+5+counter_y-counter_z),
 			# inner square
@@ -120,16 +147,16 @@ class Top(Elaboratable):
 
 			fb.coords_w.xy.eq(line.coords.xy),
 			fb.write.eq(line.write),
-			fb.fill_data.eq(0), # background color
+			fb.fill_data.eq(4), # background color
+			fb.w_data.eq(1), # line color
 		]
 
-		color_counter = Signal(range(7))
-		with m.If(vga.frame & (divider==0) & play):
-			with m.If(color_counter == 7):
-				m.d.px += color_counter.eq(1)
-			with m.Else():
-				m.d.px += color_counter.eq(color_counter+1)
-		m.d.comb += fb.w_data.eq(color_counter) # line color
+		#color_counter = Signal(range(7))
+		#with m.If(vga.frame & (divider==0) & play):
+		#	with m.If(color_counter == 7):
+		#		m.d.px += color_counter.eq(1)
+		#	with m.Else():
+		#		m.d.px += color_counter.eq(color_counter+1)
 
 		# do this one step after updating the counters
 		m.d.px += line.start.eq(vga.frame)
@@ -140,7 +167,11 @@ class Top(Elaboratable):
 def build_and_run():
 	board = ICEBreakerPlatform()
 	board.add_resources([vga_resource])
-	board.build(Top(), do_program=True)
+	from subprocess import CalledProcessError
+	try:
+		board.build(Top(), do_program=True)
+	except CalledProcessError:
+		print("Can't find iCE FTDI USB device")
 
 from amaranth.build import *
 if __name__ == "__main__":

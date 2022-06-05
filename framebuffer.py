@@ -66,13 +66,13 @@ class FrameBuffer(Elaboratable):
 		with m.If(self.swap):
 			m.d.px += selected.eq(~selected)
 
-		m.d.px += [
+		m.d.comb += [
 			fb0.rp.en.eq(~selected),
 			fb1.rp.en.eq(selected),
 		]
 
 		with m.If(selected):
-			m.d.px += [
+			m.d.comb += [
 				fb0.wp.addr.eq(self.coords_w.xy),
 				fb0.wp.data.eq(self.w_data),
 				fb0.wp.en.eq(self.write),
@@ -83,7 +83,7 @@ class FrameBuffer(Elaboratable):
 				self.color.rgb.eq(self.palette[fb1.rp.data]),
 			]
 		with m.Else():
-			m.d.px += [
+			m.d.comb += [
 				fb1.wp.addr.eq(self.coords_w.xy),
 				fb1.wp.data.eq(self.w_data),
 				fb1.wp.en.eq(self.write),
