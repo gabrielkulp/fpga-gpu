@@ -177,8 +177,6 @@ class _SegmentAccessArbiter(Elaboratable):
 		pending_index = Signal(14)
 		pending_data = [Coords(self.max_x, self.max_y), Coords(self.max_x, self.max_y)]
 
-		led = _platform.request("led_r")
-
 		# reading gets priority in the edge case that both happen simultaneously
 		m.d.px += self.write_done.eq(0)
 		m.d.px += mem.write.eq(0)
@@ -186,7 +184,6 @@ class _SegmentAccessArbiter(Elaboratable):
 			m.d.px += mem.index.eq(self.index_read)
 		with m.Elif(pending_write):
 			m.d.px += [
-				led.o.eq(~led.o),
 				pending_write.eq(0),
 				self.write_done.eq(1),
 				mem.write.eq(1),
@@ -194,7 +191,6 @@ class _SegmentAccessArbiter(Elaboratable):
 				mem.endpoints_in[0].xy.eq(pending_data[0].xy),
 				mem.endpoints_in[1].xy.eq(pending_data[1].xy),
 			]
-		m.d.px += mem.index.eq(0)
 		
 		m.d.comb += self.endpoints_out[0].xy.eq(mem.endpoints_out[0].xy)
 		m.d.comb += self.endpoints_out[1].xy.eq(mem.endpoints_out[1].xy)
@@ -214,7 +210,8 @@ class LineSet(Elaboratable):
 		self.max_y = max_y
 
 		# UART in
-		self.length = Signal(14)
+		self.index_start = Signal(14)
+		self.index_end = Signal(14, reset=10)
 		self.index_write = Signal(14)
 		self.request_write = Signal()
 		self.endpoints_in = [Coords(max_x, max_y), Coords(max_x, max_y)]
@@ -229,7 +226,7 @@ class LineSet(Elaboratable):
 	
 	def elaborate(self, _platform):
 		m = Module()
-		counter = Signal(self.length.width)
+		counter = Signal(self.index_start.width)
 
 		m.submodules.mem = arb = _SegmentAccessArbiter(self.max_x, self.max_y)
 
@@ -239,34 +236,44 @@ class LineSet(Elaboratable):
 			self.write.eq(line.write),
 			line.endpoints[0].xy.eq(arb.endpoints_out[0].xy),
 			line.endpoints[1].xy.eq(arb.endpoints_out[1].xy),
-			#line.endpoints[0].xy.eq(self.endpoints_in[0].xy),
-			#line.endpoints[1].xy.eq(self.endpoints_in[1].xy),
 
 			arb.index_write.eq(self.index_write),
 			arb.request_write.eq(self.request_write),
 			arb.endpoints_in[0].xy.eq(self.endpoints_in[0].xy),
 			arb.endpoints_in[1].xy.eq(self.endpoints_in[1].xy),
-			self.write_done.eq(arb.write_done)
+			self.write_done.eq(arb.write_done),
 		]
+
+		plat_leds = [_platform.request("led_g", n+1).o for n in range(4)]
+		leds = Signal(4)
+		m.d.comb += Cat(*plat_leds).eq(leds)
 
 		m.d.px += line.start.eq(0)
 		m.d.px += arb.request_read.eq(0)
 		with m.FSM(reset="IDLE", domain="px"):
 			with m.State("IDLE"):
 				with m.If(self.start):
-					m.d.px += arb.index_read.eq(counter)
+					m.d.px += counter.eq(self.index_start)
+					m.d.px += arb.index_read.eq(self.index_start)
 					m.d.px += arb.request_read.eq(1)  # how many cycles until the result is available?
 					m.next = "START"
-			#with m.State("WAIT"):
-			#	m.next = "START"
 			with m.State("START"):
-				#m.d.px += line.endpoints[0].xy.eq(mem.endpoints_out[0].xy)
-				#m.d.px += line.endpoints[1].xy.eq(mem.endpoints_out[1].xy)
-				m.d.px += line.start.eq(1)
+				m.next = "WAIT"
+			with m.State("WAIT"):
+				with m.If(counter != 0):  # don't render line with index 0
+					m.d.px += line.start.eq(1)
 				m.next = "DRAW"
 			with m.State("DRAW"):
-				with m.If(line.done):
-					m.d.px += counter.eq(0)
-					m.next = "IDLE"
+				with m.If(line.done | (counter == 0)):
+					with m.If(counter == self.index_end):
+						m.d.px += leds.eq(2)
+						m.d.px += counter.eq(self.index_start)
+						m.next = "IDLE"
+					with m.Else():
+						m.d.px += leds.eq(1)
+						m.d.px += counter.eq(counter + 1)
+						m.d.px += arb.index_read.eq(counter + 1)
+						m.d.px += arb.request_read.eq(1)
+						m.next = "START"
 		
 		return m

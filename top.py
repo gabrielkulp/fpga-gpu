@@ -3,7 +3,7 @@ from amaranth import *
 from amaranth_boards.icebreaker import ICEBreakerPlatform
 from structures import Coords
 
-from uart import UART
+from uart import UART, commands, ping_res, ack
 from vga import VGA, vga_resource
 from framebuffer import FrameBuffer
 from lines import LineSet
@@ -47,15 +47,17 @@ class Top(Elaboratable):
 		]
 
 		m.submodules.uart = uart = UART(platform.request("uart"))
-		#led = platform.request("led")
-		#m.d.comb += led.o.eq(uart.rx_error)
+		led = platform.request("led_r")
+		m.d.comb += led.o.eq(uart.rx_error)
 
 		# auto-reply with data immediately
 		empty = Signal(reset=1)
 		m.d.comb += [
-			uart.rx_ack.eq(1), # mark received to not enter error state;
+			uart.rx_ack.eq(1), # mark received to not enter error state
+		]
+		m.d.px += [
 			uart.tx_data.eq(~uart.rx_data),
-			uart.tx_ready.eq(1)
+			uart.tx_ready.eq(0)
 		]
 
 		m.submodules.line = line = LineSet(160,120)
@@ -66,49 +68,77 @@ class Top(Elaboratable):
 			fb.w_data.eq(1), # line color
 		]
 
-		m.d.px += line.length.eq(1)
+		#m.d.px += line.length.eq(1)
 		index_write = Signal(16)
 
-		plat_leds = [platform.request("led_g", n+1).o for n in range(4)]
-		leds = Signal(4)
-		m.d.comb += Cat(*plat_leds).eq(leds)
-
 		endpoints = [Coords(160, 120), Coords(160, 120)]
+		index_start = Signal(14)
+		index_end = Signal(14)
 		m.d.px += line.request_write.eq(0)
-		with m.FSM(reset="IDLE", domain="px"):
-			with m.State("IDLE"):
-				m.d.px += leds.eq(0)
+		with m.FSM(reset="CMD", domain="px"):
+			with m.State("CMD"):
+				with m.If(uart.rx_ready):
+					with m.If(uart.rx_data == commands["ping"]):
+						# reply with 0x42
+						m.d.px += [uart.tx_data.eq(ping_res), uart.tx_ready.eq(1)]
+					with m.Elif(uart.rx_data == commands["write"]):
+						m.next = "WR_IDX0"
+					with m.Elif(uart.rx_data == commands["set_bounds"]):
+						m.next = "BOUNDS_S0"
+
+			with m.State("WR_IDX0"):
+				with m.If(uart.rx_ready):
+					m.d.px += index_write[:8].eq(uart.rx_data)
+					m.next = "WR_IDX1"
+			with m.State("WR_IDX1"):
+				with m.If(uart.rx_ready):
+					m.d.px += index_write[8:].eq(uart.rx_data)
+					m.next = "WR_X0"
+			with m.State("WR_X0"):
 				with m.If(uart.rx_ready):
 					m.d.px += endpoints[0].x.eq(uart.rx_data)
-					m.next = "Y0"
-			with m.State("Y0"):
-				m.d.px += leds.eq(1)
+					m.next = "WR_Y0"
+			with m.State("WR_Y0"):
 				with m.If(uart.rx_ready):
 					m.d.px += endpoints[0].y.eq(uart.rx_data)
-					m.next = "X1"
-			with m.State("X1"):
-				m.d.px += leds.eq(2)
+					m.next = "WR_X1"
+			with m.State("WR_X1"):
 				with m.If(uart.rx_ready):
 					m.d.px += endpoints[1].x.eq(uart.rx_data)
-					m.next = "Y1"
-			with m.State("Y1"):
-				m.d.px += leds.eq(3)
+					m.next = "WR_Y1"
+			with m.State("WR_Y1"):
 				with m.If(uart.rx_ready):
 					m.d.px += line.endpoints_in[0].xy.eq(endpoints[0].xy)
 					m.d.px += line.endpoints_in[1].x.eq(endpoints[1].x)
 					m.d.px += line.endpoints_in[1].y.eq(uart.rx_data)
-					m.d.px += endpoints[1].y.eq(uart.rx_data)
 					m.d.px += line.index_write.eq(index_write)
 					m.d.px += line.request_write.eq(1)
-					m.next = "IDLE"
-		#m.d.comb += line.endpoints_in[0].x.eq(20)
-		#m.d.comb += line.endpoints_in[0].y.eq(30)
-		#m.d.comb += line.endpoints_in[1].x.eq(110)
-		#m.d.comb += line.endpoints_in[1].y.eq(90)
-		#with m.If(uart.rx_ready):
-		#	m.d.px += line.index_write.eq(0)
-		#	m.d.px += line.request_write.eq(1)
+					m.d.px += [uart.tx_data.eq(ack), uart.tx_ready.eq(1)]
+					m.next = "CMD"
 
+			with m.State("BOUNDS_S0"):
+				with m.If(uart.rx_ready):
+					m.d.px += index_start[:8].eq(uart.rx_data)
+					m.next = "BOUNDS_S1"
+			with m.State("BOUNDS_S1"):
+				with m.If(uart.rx_ready):
+					m.d.px += index_start[8:].eq(uart.rx_data)
+					m.next = "BOUNDS_E0"
+			with m.State("BOUNDS_E0"):
+				with m.If(uart.rx_ready):
+					m.d.px += index_end[:8].eq(uart.rx_data)
+					m.next = "BOUNDS_E1"
+			with m.State("BOUNDS_E1"):
+				with m.If(uart.rx_ready):
+					m.d.px += index_end[8:].eq(uart.rx_data)
+					m.next = "BOUNDS_COMMIT"
+			with m.State("BOUNDS_COMMIT"):
+				m.d.px += line.index_start.eq(index_start)
+				m.d.px += line.index_end.eq(index_end)
+				m.d.px += [uart.tx_data.eq(ack), uart.tx_ready.eq(1)]
+				m.next = "CMD"
+
+				
 		# do this one step after updating the counters
 		m.d.px += line.start.eq(vga.frame)
 

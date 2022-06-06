@@ -5,10 +5,13 @@ from amaranth import *
 from amaranth.build import *
 
 baud = 115200
+ping_res = 0x42
+ack = 0xbd
 
 commands = {
 	"ping": 0,
 	"write": 1,
+	"set_bounds": 2,
 }
 
 def _divisor(freq_in, freq_out, max_ppm=None):
