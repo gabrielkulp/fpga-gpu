@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from platform import platform
 from amaranth import *
 from amaranth_boards.icebreaker import ICEBreakerPlatform
 from structures import Coords
@@ -28,37 +27,6 @@ class Top(Elaboratable):
 			m.d.px += last.eq(btn.i)
 			with m.If(btn.i & ~last):
 				m.d.px += step.eq(1)
-		
-
-		sign = Signal(shape=signed(2), reset=1)
-		counter_y = Signal(range(60))
-		with m.If(vga.frame & play):
-			m.d.px += counter_y.eq(counter_y+sign)
-		with m.If(counter_y == 59):
-			m.d.px += sign.eq(-1)
-		with m.Elif(counter_y == 0):
-			m.d.px += sign.eq(1)
-
-		sign_2 = Signal(shape=signed(2), reset=1)
-		counter_x = Signal(range(80))
-		with m.If(vga.frame & play):
-			m.d.px += counter_x.eq(counter_x+sign_2)
-		with m.If(counter_x == 79):
-			m.d.px += sign_2.eq(-1)
-		with m.Elif(counter_x == 0):
-			m.d.px += sign_2.eq(1)
-		
-		divider = Signal(range(16))
-		with m.If(vga.frame & play):
-			m.d.px += divider.eq(divider+1)
-		sign_3 = Signal(shape=signed(2), reset=1)
-		counter_z = Signal(range(-5,5))
-		with m.If(vga.frame & play & (divider == 0)):
-			m.d.px += counter_z.eq(counter_z+sign_3)
-		with m.If(counter_z == 3):
-			m.d.px += sign_3.eq(-1)
-		with m.Elif(counter_z == -3):
-			m.d.px += sign_3.eq(1)
 
 		m.submodules.fb = fb = FrameBuffer()
 		
@@ -79,84 +47,67 @@ class Top(Elaboratable):
 		]
 
 		m.submodules.uart = uart = UART(platform.request("uart"))
-		led = platform.request("led")
-		m.d.comb += led.o.eq(uart.rx_error)
-
-		point = Coords(160, 120)
-
-		with m.FSM(reset="IDLE", domain="px"):
-			with m.State("IDLE"):
-				with m.If(uart.rx_ready):
-					m.next = "Y"
-					m.d.px += point.x.eq(uart.rx_data)
-			with m.State("Y"):
-				with m.If(uart.rx_ready):
-					m.next = "IDLE"
-					m.d.px += point.y.eq(uart.rx_data)
+		#led = platform.request("led")
+		#m.d.comb += led.o.eq(uart.rx_error)
 
 		# auto-reply with data immediately
 		empty = Signal(reset=1)
-		# auto-reply with `data` I think?
 		m.d.comb += [
-			uart.rx_ack.eq(1), # mark received to not enter error state
+			uart.rx_ack.eq(1), # mark received to not enter error state;
 			uart.tx_data.eq(~uart.rx_data),
 			uart.tx_ready.eq(1)
 		]
 
-		m.submodules.line = line = LineSet(160,120, 8)
+		m.submodules.line = line = LineSet(160,120)
 		m.d.comb += [
-			line.segments[0][0].xy.eq(point.xy),
-			#line.segments[0][0].y.eq(),
-			line.segments[0][1].x.eq(80-40-5+counter_x+counter_z),
-			line.segments[0][1].y.eq(60-30-5+counter_y+counter_z),
-
-			line.segments[1][0].x.eq(159),
-			line.segments[1][0].y.eq(0),
-			line.segments[1][1].x.eq(80-40+5+counter_x+counter_z),
-			line.segments[1][1].y.eq(60-30-5+counter_y-counter_z),
-
-			line.segments[2][0].x.eq(0),
-			line.segments[2][0].y.eq(119),
-			line.segments[2][1].x.eq(80-40-5+counter_x-counter_z),
-			line.segments[2][1].y.eq(60-30+5+counter_y+counter_z),
-
-			line.segments[3][0].x.eq(159),
-			line.segments[3][0].y.eq(119),
-			line.segments[3][1].x.eq(80-40+5+counter_x-counter_z),
-			line.segments[3][1].y.eq(60-30+5+counter_y-counter_z),
-			# inner square
-			line.segments[4][0].x.eq(80-40-5+counter_x+counter_z),
-			line.segments[4][0].y.eq(60-30-5+counter_y+counter_z),
-			line.segments[4][1].x.eq(80-40-5+counter_x-counter_z),
-			line.segments[4][1].y.eq(60-30+5+counter_y+counter_z),
-
-			line.segments[5][0].x.eq(80-40-5+counter_x-counter_z),
-			line.segments[5][0].y.eq(60-30+5+counter_y+counter_z),
-			line.segments[5][1].x.eq(80-40+5+counter_x-counter_z),
-			line.segments[5][1].y.eq(60-30+5+counter_y-counter_z),
-
-			line.segments[6][0].x.eq(80-40+5+counter_x-counter_z),
-			line.segments[6][0].y.eq(60-30+5+counter_y-counter_z),
-			line.segments[6][1].x.eq(80-40+5+counter_x+counter_z),
-			line.segments[6][1].y.eq(60-30-5+counter_y-counter_z),
-
-			line.segments[7][0].x.eq(80-40+5+counter_x+counter_z),
-			line.segments[7][0].y.eq(60-30-5+counter_y-counter_z),
-			line.segments[7][1].x.eq(80-40-5+counter_x+counter_z),
-			line.segments[7][1].y.eq(60-30-5+counter_y+counter_z),
-
 			fb.coords_w.xy.eq(line.coords.xy),
 			fb.write.eq(line.write),
 			fb.fill_data.eq(4), # background color
 			fb.w_data.eq(1), # line color
 		]
 
-		#color_counter = Signal(range(7))
-		#with m.If(vga.frame & (divider==0) & play):
-		#	with m.If(color_counter == 7):
-		#		m.d.px += color_counter.eq(1)
-		#	with m.Else():
-		#		m.d.px += color_counter.eq(color_counter+1)
+		m.d.px += line.length.eq(1)
+		index_write = Signal(16)
+
+		plat_leds = [platform.request("led_g", n+1).o for n in range(4)]
+		leds = Signal(4)
+		m.d.comb += Cat(*plat_leds).eq(leds)
+
+		endpoints = [Coords(160, 120), Coords(160, 120)]
+		m.d.px += line.request_write.eq(0)
+		with m.FSM(reset="IDLE", domain="px"):
+			with m.State("IDLE"):
+				m.d.px += leds.eq(0)
+				with m.If(uart.rx_ready):
+					m.d.px += endpoints[0].x.eq(uart.rx_data)
+					m.next = "Y0"
+			with m.State("Y0"):
+				m.d.px += leds.eq(1)
+				with m.If(uart.rx_ready):
+					m.d.px += endpoints[0].y.eq(uart.rx_data)
+					m.next = "X1"
+			with m.State("X1"):
+				m.d.px += leds.eq(2)
+				with m.If(uart.rx_ready):
+					m.d.px += endpoints[1].x.eq(uart.rx_data)
+					m.next = "Y1"
+			with m.State("Y1"):
+				m.d.px += leds.eq(3)
+				with m.If(uart.rx_ready):
+					m.d.px += line.endpoints_in[0].xy.eq(endpoints[0].xy)
+					m.d.px += line.endpoints_in[1].x.eq(endpoints[1].x)
+					m.d.px += line.endpoints_in[1].y.eq(uart.rx_data)
+					m.d.px += endpoints[1].y.eq(uart.rx_data)
+					m.d.px += line.index_write.eq(index_write)
+					m.d.px += line.request_write.eq(1)
+					m.next = "IDLE"
+		#m.d.comb += line.endpoints_in[0].x.eq(20)
+		#m.d.comb += line.endpoints_in[0].y.eq(30)
+		#m.d.comb += line.endpoints_in[1].x.eq(110)
+		#m.d.comb += line.endpoints_in[1].y.eq(90)
+		#with m.If(uart.rx_ready):
+		#	m.d.px += line.index_write.eq(0)
+		#	m.d.px += line.request_write.eq(1)
 
 		# do this one step after updating the counters
 		m.d.px += line.start.eq(vga.frame)
@@ -167,6 +118,7 @@ class Top(Elaboratable):
 def build_and_run():
 	board = ICEBreakerPlatform()
 	board.add_resources([vga_resource])
+	board.add_resources(board.break_off_pmod)
 	from subprocess import CalledProcessError
 	try:
 		board.build(Top(), do_program=True)
