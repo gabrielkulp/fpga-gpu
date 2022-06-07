@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from operator import ge
 from serial import Serial
 from typing import Tuple
 from time import sleep
@@ -6,7 +7,7 @@ from struct import pack
 from top import build_and_run
 
 import uart
-
+import geometry
 
 class GPUConnection():
 	coord_max = 0xff
@@ -23,7 +24,7 @@ class GPUConnection():
 
 	@property
 	def alive(self):
-		self.conn.write(uart.commands["ping"].to_bytes(1, 'big'))
+		self.conn.write(pack('B', uart.commands["ping"]))
 		res = self.conn.read(1)
 		return res == pack('B', uart.ping_res)
 	
@@ -46,29 +47,75 @@ class GPUConnection():
 		self.conn.write(msg)
 		res = self.conn.read(1)
 		return res == pack('B', uart.ack)
+	
+	def v_sync(self):
+		self.conn.write(pack('B', uart.commands["vsync"]))
+		res = self.conn.read(1)
+		return res == pack('B', uart.ack)
+	
+	def blank(self):
+		return self.set_bounds(0, 0)
 
 
-def main():
-	print("Starting build...")
-	build_and_run()
+def transform(segment):
+	(xs, ys, xe, ye) = segment
+	xs += 160//2
+	ys += 120//2
+	xe += 160//2
+	ye += 120//2
+	return (xs, ys, xe, ye)
 
-	sleep(2)
+
+def main(flash=True):
+	if flash:
+		print("Starting build...")
+		build_and_run()
+		sleep(2)
 
 	gpu = GPUConnection("/dev/ttyUSB1")
 	print("connected")
-	input()
-	assert gpu.send_segment(0, (30, 50, 100, 90))
-	input()
-	assert gpu.send_segment(1, (30, 50, 110, 80))
-	input()
-	assert gpu.send_segment(2, (30, 50, 80, 80))
-	input()
-	assert gpu.send_segment(3, (30, 50, 60, 80))
-	input()
-	assert gpu.set_bounds(2, 3)
+
+	points = [
+		geometry.Point(20, 20),
+		geometry.Point(20, -20),
+		geometry.Point(-20, -20),
+		geometry.Point(-20, 20),
+	]
+	edges = [
+		(0,1),
+		(1,2),
+		(2,3),
+		(3,0)
+	]
+	square = geometry.Mesh(points, edges)
+	points = [
+		geometry.Point(0, 25),
+		geometry.Point(25, 0),
+		geometry.Point(0, -25),
+		geometry.Point(-25, 0),
+	]
+	square2 = geometry.Mesh(points, edges)
+
+
+	gpu.blank()
+	for i, seg in enumerate(square.serialize()):
+		gpu.send_segment(i+1, transform(seg))
+
+	for i, seg in enumerate(square2.serialize()):
+		gpu.send_segment(i+1+len(edges), transform(seg))
+
+	for _ in range(300):
+		gpu.set_bounds(1, len(edges))
+		gpu.set_bounds(len(edges)+1, len(edges)*2)
+	
+	gpu.blank()
 	gpu.close()
 	print("done!")
 
 
+import sys
 if __name__ == "__main__":
-	main()
+	if "--flash" in sys.argv:
+		main(flash=True)
+	else:
+		main(flash=False)

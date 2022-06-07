@@ -1,0 +1,216 @@
+\documentclass[11pt,conference]{IEEEtran}
+\usepackage[outputdir=latex.out]{minted}
+\usepackage{booktabs}
+\usepackage[hidelinks=true]{hyperref}
+
+\title{Vector Graphics Accelerator\\for Real-Time Line Rendering}
+\author{Gabriel Kulp\\\texttt{kulpga@oregonstate.edu}}
+
+\newcommand{\function}[2]{\texttt{#1(#2)}}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+	Graphics are ubiquitous in modern and retro computing, but often require a large amount of processor time, which therefore cannot be used for application logic.
+	Graphics accelerators allow the main processor to offload much of the rendering work, providing a high-level interface to direct the accelerator's effort within some limited domain.
+	In this paper, I present an FPGA-based vector graphics accelerator that translates high-level instructions about what to draw into an HDMI signal that can be displayed on a commodity monitor.
+	It can store up to $2^{14}$ line segments, with fast switching between which sets of lines to display. This allows flexible operation, where a long animation could be preloaded, then flipped through with minimal communication between the host and accelerator.
+	Alternatively, the same accelerator and protocol could be used for sending new line segments to the accelerator in real-time, as might be required for an interactive application.
+	Finally, the set of lines to be rendered can be iteratively added to, with the growing set of lines rendered even as new ones are added, which may be applicable to mathematically-intense scenes that take longer than $1/60$ seconds for the host to compute.
+\end{abstract}
+
+\section{Background}
+The Lattice iCE40 FPGA\cite{LatticePage} is a common target platform for open-source development following work to reverse engineer the chip internals and bitstream format.
+IceStorm\cite{IceStorm} is a fully open-source toolchain to go from Verilog to flashing a bitstream, including logic synthesis (\texttt{yosys}), placing \& routing (\texttt{nextpnr}), packing into a bitstream (\texttt{icepack}), and programming (\texttt{iceprog}).
+This open-source toolchain is subject to continuous improvement via community contributions and bug reports, leading to a fast and feature-rich baseline for further open-source projects.
+
+Several open-hardware projects have also sprung up in response to this toolchain and the low cost of the iCE40 chip itself.
+One such project, the iCEBreaker development board\cite{iCEBreaker}, integrates a USB interface for flashing, several buttons and LEDs for simple IO, and three PMOD interfaces.
+The PMOD standard interface is a $2\times6$ array of pins carrying one byte and duplicate power and ground pins at the standard 2.54mm pitch.
+Considering the simplicity of the interface, it's no surprise that a variety of peripherals are available from many vendors, including open-hardware designs for DRAM, 7-segment displays, LED matrices, HDMI, and even Ethernet.
+
+In this project\footnote{\url{https://github.com/gabrielkulp/FPGA-GPU}}, I use an iCEBreaker to interface with its own serial interface and the HDMI PMOD expansion to implement a vector graphics accelerator that receives commands from a host over serial and renders the resulting image on a display over the HDMI interface.
+
+
+\section{Approach and Design}
+I used the Amaranth\footnote{\url{https://github.com/amaranth-lang/amaranth}} open-source Python-based HDL.
+Amaranth can interface with the open-source IceBreaker toolchain, or the proprietary one provided by the manufacturer.
+Amaranth is actually a meta-programming language, in that the Python script produces the Verilog source which is then synthesized.
+This offers flexibility, particularly with repeated instantiations or ensuring that host and device code use the same constants, sizes, and frequencies.
+In my case, the host and device code are defined in the same repository with overlap.
+
+At the highest level, the accelerator receives commands from the host to either send new line segments (specified by endpoint coordinates) or adjust which previously-sent line segments should be rendered.
+These commands are reflected in real-time on the display, with less than one frame of latency.
+
+This is achieved with a modular approach.
+The Display Controller maintains counters for the internal state of the HDMI peripheral, sending control signals at the appropriate times and passing through color signals during the drawing phase of each frame.
+The Framebuffer combines blocks of SRAM distributed over the FPGA die into two buffers; one is written to by rendering modules and the other is read out to the Display Controller as a frame is sent to the display.
+These two buffers atomically swap when each frame is completed, ensuring that rendering never takes place on the same buffer that is being displayed, which could cause visual artifacts.
+
+The Line Renderer takes endpoint coordinates and iteratively outputs coordinates along that line segment.
+When connected to the Framebuffer, this draws lines that will be displayed.
+The Line Manager integrates a buffer for holding segment endpoints with a Line Renderer, such that each line within a specified range are drawn sequentially.
+The Line Manager also must accept input to change the coordinates of stored segments and the range of which segments to render, which is a challenge since line segments are stored in single-ported RAM and line rendering is timing-sensitive to meet the frame deadline.
+
+Finally, the UART and Command Interpreter modules interface with the serial pins to receive commands, buffer parameters as they are received, and apply the specified operations to the other modules in the design.
+
+\subsection{Display Controller}
+The HDMI peripheral device presents an HDMI interface to the user for connecting a display, but it presents a VGA-like interface to the FPGA\@.
+The pinout includes horizontal and vertical sync, ``data-enable'' to specify that the scanline has reached the active area of the frame, and four pins each for red, green, and blue.
+The requires two PMOD connectors, since eight pins do not cover all necessary connections.
+Internally, the HDMI PMOD contains some active processing to convert the VGA-like signal into HDMI by watching the timing of the horizontal and vertical sync signals and the ``data-enable'' signal.
+
+To achieve proper timing, the FPGA must maintain counters for the horizontal and vertical position of the active pixel, including the appropriate size of overscan areas off of each edge.
+To provide a useful interface to the rest of the FPGA design, the Display Controller presents these vertical and horizontal counters through $x$ and $y$ coordinate counters that only track the active region of the display.
+The horizontal and vertical sync signals are also useful to the rest of the design to synchronize timing to the start of each frame or line.
+
+In addition to the correct relative timing of horizontal and vertical sync signals, the absolute speed must work out to 60 frames per second.
+This means the pixel clock cannot be tied to the default 12MHz oscillator, but must instead be routed through the FPGA's phase-locked loop (PLL) to multiply the clock signal to 25MHz.
+This adds some complication, since the rest of the design must either use the non-default clock domain which offers less time for combinational logic to propagate, or cross clock domains to connect rendering and display logic.
+I chose the former option since my language choice (Amaranth) provided easy syntactic ways to propagate the new clock domain and specify which domain other modules should be tied to.
+
+\subsection{Framebuffer}
+The iCE40UP5k has thirty tiles of distributed block RAM, each with 4096 bits that can be addressed in configurable widths.
+With a screen resolution of $180\times120$ and two framebuffers, this leaves only three bits per pixel.
+Since the HDMI PMOD expects twelve-bit color, I used an eight-color palette like the Linux console.
+
+The Framebuffer must provide a reading interface to the Display Controller to retrieve 
+color data (through a transparent palette lookup), and it must also provide a writing interface to any rendering modules.
+These are routed to different buffers, with the routing controlled by a single ``swap'' signal that is connected to the Display Controller's vertical sync signal.
+
+However, if only the display can read from a buffer and only the renderers can write to a different buffer, then there must be a better way to clear the screen than iterating through all the pixels of the writing buffer before rendering any lines.
+The solution I chose is a ``write after read'' option that takes advantage of the sequential access of the Display Controller to fill all pixels with a chosen value after it is read out.
+Since the Framebuffer resolution is divided by four in each direction compared to the native HDMI resolution ($640\times480$), this overwriting cannot happen on first read, since the same pixel must be read 16 times for each frame.
+One solution would be to use a line buffer that reads one line of pixels and is then drawn four times, but since I used all block RAM for the Framebuffer's main memory, I instead only activated the overwrite feature when the $x$ and $y$ coordinates, modulo four, were both equal to three, indicating the final bottom-right screen pixel of each $4\times4$ block is being drawn.
+
+\subsection{Line Renderer}
+I used Bresenham's Line Algorithm\cite{Bresenham} to generate coordinates to plot.
+Since it is driven by the pixel clock, the time to draw a line is the length of that line, plus two cycles of setup time.
+Especially when considering that there are 16 pixel clock cycles for each rendered $4\times4$ pixel and the extra time for front porch, back porch, and sync regions of each frame, this leaves ample time to render many more lines than would be practically necessary for a real rendering scenario.
+
+The Line Renderer has a start signal and stop signal.
+When the start signal is asserted, the Line Renderer latches the endpoints and sets its internal coordinates to the start of the line segment.
+It then moves along the line alternating horizontal and vertical steps, tracking how far above or below it the current point is from the line.
+Upon reaching the second endpoint, it asserts the stop signal.
+
+\subsection{Line Manager and Line Memory Arbiter}
+The Line Manager serves two roles: it must orchestrate the sequential rendering of all selected lines at the start of each frame, and it must service requests to overwrite existing segment entries or the set of selected lines.
+Therefore, it must contain a large bank of memory for storing and retrieving line segment endpoints.
+This is stored in single-ported RAM, and therefore the read and write accesses must be handled appropriately to service all requests in a reasonable amount of time.
+This buffering and prioritization of requests is handled by the Line Memory Arbiter, which always gives priority to read accesses so that line rendering can't be delayed by line segment updates.
+Any write requests are buffered until the first cycle when there is no active read request, and a ``write-done'' signal is asserted once the request goes through.
+
+The set of line segments to render in each frame is stored as a start and stop index within the array. At the start of the frame, a counter is set to the start index, and then as each line completes rendering, the counter is incremented and the next segment begins.
+Once the counter reaches the stop index, all segments have been rendered and the ``done'' signal is asserted.
+There is no bounds checking, since the entire address space is accessible in RAM\@.
+Further, the counter is allowed to overflow, so the full set of line segments is actually a ring buffer, which could be useful from a software perspective.
+
+Finally, if the counter is set to zero, then no line is rendered, regardless of the endpoint data at that index.
+This offers a way to not render any lines to the screen: just set the start and end indices both to zero, and the screen will remain blank.
+
+\subsection{UART and Command Interpreter}
+A finite state machines drives UART operation and command interpretation.
+The UART module presents an interface to the other modules with a ``ready'' signal for transmitting and another for receiving.
+When \texttt{rx\_ready} goes high, \texttt{rx\_data} contains the byte that was just received.
+Bringing \texttt{tx\_ready} high triggers the transmission of \texttt{tx\_data}.
+
+
+There are currently only three commands, shown in Table~\ref{tab:cmd}.
+Note that future commands would reply with \texttt{0xbd}, with a different reply reserved for differentiating the Ping command.
+
+\begin{table}
+	\center{}
+	\caption{List of current commands.}%
+	\label{tab:cmd}
+	\begin{tabular}{l l c}
+		\toprule
+		Command & Arguments & Reply \\
+		\midrule
+		Ping        & none                             & \texttt{0x42} \\
+		Set Segment & idx, $x_0, y_0, x_1, y_1$        & \texttt{0xbd} \\
+		Set Bounds  & $\textrm{idx}_0, \textrm{idx}_1$ & \texttt{0xbd}
+	\end{tabular}
+\end{table}
+
+A state machine receives the first byte and checks if it matches the index of an existing command.
+If so, that command's chain of states is entered.
+Set Segment first receives the index of the segment to write.
+Since the index is 14 bits, it takes two bytes to receive.
+Next, $x_0$ is received in one byte, then $y_0$, and on through the coordinates.
+Once the last byte is received, the action is performed and the reply is sent.
+
+In the case of Ping, no state transitions are required since the reply can be triggered in the same cycle the command is received.
+In the case of Set Bounds, the action and reply are delayed until the next vertical sync signal.
+
+
+\section{Results}
+The final serial interface is facilitated by a Python library providing wrapper functions that wait for acknowledgement.
+This ensures proper synchronization between the host and device.
+While an explicit \function{gpu.v\_sync}{} function exists, it is generally not necessary since \function{gpu.set\_bounds}{} implicitly synchronizes before committing the change, and does not send an acknowledgement over serial until it has committed the change.
+
+Below is an example of how to use the API\@.
+Each function call sends one command and waits for the response.
+The initial constructor call includes a Ping that must return the expected response, or the connection creation fails.
+In this way, the Ping command serves as a handshake to weakly ensure that the connected serial device is the intended device.
+The code snippet first disables line rendering, then draws a single line for one frame.
+Note that \function{gpu.blank}{} is an alias for \function{gpu.set\_bounds}{0, 0}, which disables line rendered as described above.
+Next, it sends every element of a list of line segments called \texttt{segments} to the GPU and sets the bounds to render the first half of the set.
+In the next frame it renders the second half of the set, and then it renders the whole set for the next frame.
+The final \function{gpu.close}{} only closes the serial connection, and does not send any commands, so the GPU will continue to render all lines after execution of this script finishes.
+
+\begin{minted}[frame=lines,]{python}
+gpu = GPUConnection("/dev/ttyUSB1")
+gpu.blank()
+gpu.send_segment(1, (10, 30, 120, 90)
+gpu.set_bounds(1, 1)
+for i, seg in enumerate(segments):
+	gpu.send_segment(i+2, seg)
+end = len(segments)
+gpu.set_bounds(1, end//2)
+gpu.set_bounds(end//2, end+1)
+gpu.set_bounds(1, end+1)
+gpu.close()
+\end{minted}
+
+\section{Challenges}
+My first challenge was getting the timing correct for the Display Controller.
+Unfortunately, I wasted a lot of time by reading the PMOD pinout incorrectly.
+Once I realized this, the rest of the code had been so thoroughly refactored and simulated that it worked immediately.
+
+The next challenge was the Line Renderer.
+Originally, I wanted to avoid the use of a framebuffer to eventually support parallel pixel shaders.
+The best method I could find for determining if a pixel lands on a line was to calculate that pixel's distance from the line segment.
+Unfortunately, this required several multiplications and a division, and I spent a lot of time pipelining and optimizing an algorithm that wouldn't work well here.
+I had a semi-functioning solution that drew many parallel lines because of overflows, but I couldn't find an elegant way to handle overflows or increase the bit width because of clock period constraints.
+Additionally, the multiplications took too many LUTs and I would have only been able to render four or five lines.
+
+My second attempt at a line renderer also avoided a framebuffer so that I could preserve the full resolution of the output.
+This time, I used the same Bresenham's algorithm, but modified to follow the scanline as the VGA module iterated through pixels.
+This works well for lines with negative slope and steep vertical slope, since the line can be drawn in the same order as in the typical algorithm.
+For shallow positive slopes, I half-heartedly tried several methods to pre-compute the next segment so I could draw it in reverse order, but ultimately I went with the scalability tradeoffs of a framebuffer.
+
+Finally, I was stuck for a while when trying to interface with the single-ported RAM for storing line segments.
+These SPRAM blocks must be instantiated manually and cannot be inferred with the standard \function{Memory}{} call.
+SPRAM blocks offer a surprisingly complex interface, including the ability to put it to sleep or turn it off completely.
+Therefore, there are pins labeled \texttt{STANDBY}, \texttt{SLEEP}, and \texttt{POWEROFF}.
+Unfortunately, \texttt{STANDBY} and \texttt{SLEEP} require connecting to a low signal, while \texttt{POWEROFF} \textit{requires a high signal to turn the RAM on}.
+I actually ran into this a year ago, and referenced my old code to finally realize the issue.
+
+\section{Future Work}
+Most trivially, I would like to add an interface to change the color palette.
+It would be a simple extension of the current command interpreting system and would likely take under an hour to implement and test.
+With a bit more work, I could dedicate a third SPRAM block to line segment colors (one is used for start coordinates and the other is used for end coordinates).
+Then the Line Manager would need to be modified to draw with the stored palette index instead of a fixed one.
+
+As a true next step, I would like to add a pipeline step to transform coordinates between their place in memory and the Line Renderer.
+This would allow the host to send a mesh (using the fourth SPRAM for the $z$ coordinates), and then only small transform updates to change what's rendered on the screen.
+Further, there could be multiple pairs of start and end segment indices, each associated with a different transformation matrix. This would allow for individual transformations of different meshes, and changing the indices associated with one transform would allow the host to animate changes to the mesh.
+
+Finally, the architecture does not require all rendering to be lines.
+I could add new rendering modules to be triggered after line drawing is complete to perform functions like drawing triangles or circles.
+With the ability to read back from the framebuffer that's currently being written to, this could even include screen-space operations like flood fill.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

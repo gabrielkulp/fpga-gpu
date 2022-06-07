@@ -12,6 +12,7 @@ commands = {
 	"ping": 0,
 	"write": 1,
 	"set_bounds": 2,
+	"vsync": 3
 }
 
 def _divisor(freq_in, freq_out, max_ppm=None):

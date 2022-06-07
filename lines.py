@@ -244,10 +244,6 @@ class LineSet(Elaboratable):
 			self.write_done.eq(arb.write_done),
 		]
 
-		plat_leds = [_platform.request("led_g", n+1).o for n in range(4)]
-		leds = Signal(4)
-		m.d.comb += Cat(*plat_leds).eq(leds)
-
 		m.d.px += line.start.eq(0)
 		m.d.px += arb.request_read.eq(0)
 		with m.FSM(reset="IDLE", domain="px"):
@@ -266,11 +262,9 @@ class LineSet(Elaboratable):
 			with m.State("DRAW"):
 				with m.If(line.done | (counter == 0)):
 					with m.If(counter == self.index_end):
-						m.d.px += leds.eq(2)
 						m.d.px += counter.eq(self.index_start)
 						m.next = "IDLE"
 					with m.Else():
-						m.d.px += leds.eq(1)
 						m.d.px += counter.eq(counter + 1)
 						m.d.px += arb.index_read.eq(counter + 1)
 						m.d.px += arb.request_read.eq(1)

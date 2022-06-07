@@ -33,7 +33,6 @@ class Top(Elaboratable):
 		# colors are:  black  red    green  yellow blue   purple cyan   white
 		colorscheme = [0x000, 0xb44, 0x9b6, 0xfc7, 0x7ab, 0xb7a, 0x7ba, 0xfff] # terminal
 		#colorscheme = [0x000, 0x111, 0x222, 0x333, 0x555, 0x888, 0xbbb, 0xfff] # gamma
-		#colorscheme = [0xfff, 0x000, 0x9b6, 0xfc7, 0x7ab, 0xb7a, 0x7ba, 0xfff] # inverse
 
 		for i, color in enumerate(colorscheme):
 			m.d.comb += fb.palette[i].eq(color)
@@ -50,10 +49,9 @@ class Top(Elaboratable):
 		led = platform.request("led_r")
 		m.d.comb += led.o.eq(uart.rx_error)
 
-		# auto-reply with data immediately
 		empty = Signal(reset=1)
 		m.d.comb += [
-			uart.rx_ack.eq(1), # mark received to not enter error state
+			uart.rx_ack.eq(1),  # received data is always acted upon immediately
 		]
 		m.d.px += [
 			uart.tx_data.eq(~uart.rx_data),
@@ -85,6 +83,8 @@ class Top(Elaboratable):
 						m.next = "WR_IDX0"
 					with m.Elif(uart.rx_data == commands["set_bounds"]):
 						m.next = "BOUNDS_S0"
+					with m.Elif(uart.rx_data == commands["vsync"]):
+						m.next = "VSYNC"
 
 			with m.State("WR_IDX0"):
 				with m.If(uart.rx_ready):
@@ -133,11 +133,16 @@ class Top(Elaboratable):
 					m.d.px += index_end[8:].eq(uart.rx_data)
 					m.next = "BOUNDS_COMMIT"
 			with m.State("BOUNDS_COMMIT"):
-				m.d.px += line.index_start.eq(index_start)
-				m.d.px += line.index_end.eq(index_end)
-				m.d.px += [uart.tx_data.eq(ack), uart.tx_ready.eq(1)]
-				m.next = "CMD"
-
+				with m.If(vga.frame):
+					m.d.px += line.index_start.eq(index_start)
+					m.d.px += line.index_end.eq(index_end)
+					m.d.px += [uart.tx_data.eq(ack), uart.tx_ready.eq(1)]
+					m.next = "CMD"
+			
+			with m.State("VSYNC"):
+				with m.If(vga.frame):
+					m.d.px += [uart.tx_data.eq(ack), uart.tx_ready.eq(1)]
+					m.next = "CMD"
 				
 		# do this one step after updating the counters
 		m.d.px += line.start.eq(vga.frame)
